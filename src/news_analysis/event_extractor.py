@@ -11,8 +11,8 @@ from .llm_interface import LLMClient
 
 EVENT_PROMPT = (
     "Extraia um evento estruturado da notícia a seguir. Retorne um JSON com o "
-    "formato {\"evento_tipo\": str, \"metricas\": [ {\"metrica\": str, \"valor\": float opcional, "
-    "\"expectativa\": float opcional, \"resultado\": str opcional } ], \"sentimento_geral\": str }."
+    "formato {{\"evento_tipo\": str, \"metricas\": [ {{\"metrica\": str, \"valor\": float opcional, "
+    "\"expectativa\": float opcional, \"resultado\": str opcional }} ], \"sentimento_geral\": str }}."
     "\n\nNotícia:\n{news}"
 )
 
