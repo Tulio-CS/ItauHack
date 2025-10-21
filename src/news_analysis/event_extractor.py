@@ -131,25 +131,68 @@ class StructuredEventExtractor:
     # ------------------------------------------------------------------
     def _estimate_impact(self, news: str, event: StructuredEvent) -> tuple[int, str]:
         """Approximate the impact rating following a chain-of-thought style."""
-        impact_score = 3
+        impact_score = 5
         rationale_parts: List[str] = []
 
         lowered = news.lower()
-        if any(keyword in lowered for keyword in ("atraso", "delay", "recall", "demissão")):
-            impact_score += 3
-            rationale_parts.append("Evento operacional crítico identificado.")
+
+        negative_triggers = [
+            "queda",
+            "reduz",
+            "redução",
+            "atraso",
+            "delay",
+            "recall",
+            "demissão",
+            "investigação",
+            "estagna",
+            "downgrade",
+            "miss",
+        ]
+        positive_triggers = [
+            "crescimento",
+            "aumenta",
+            "recorde",
+            "superior",
+            "upgrade",
+            "compra",
+            "lança",
+            "expansão",
+            "parceria",
+            "investirá",
+        ]
+
+        if any(trigger in lowered for trigger in negative_triggers):
+            impact_score -= 2
+            rationale_parts.append("Indicadores sugerem pressão negativa.")
+
+        if any(metric.outcome == "miss" for metric in event.metrics):
+            impact_score -= 2
+            rationale_parts.append("Alguns indicadores ficaram abaixo das expectativas.")
+
+        if event.overall_sentiment == "negativo":
+            impact_score -= 1
+            rationale_parts.append("Sentimento negativo predominante.")
+
+        if any(trigger in lowered for trigger in positive_triggers):
+            impact_score += 2
+            rationale_parts.append("Narrativa com gatilhos positivos identificados.")
+
         if any(metric.outcome == "beat" for metric in event.metrics):
             impact_score += 2
             rationale_parts.append("Resultados acima do esperado.")
-        if any(metric.outcome == "miss" for metric in event.metrics):
+
+        if event.overall_sentiment == "positivo":
             impact_score += 1
-            rationale_parts.append("Alguns indicadores abaixo das expectativas.")
-        if event.overall_sentiment == "negativo":
-            impact_score += 1
-            rationale_parts.append("Sentimento negativo predominante.")
+            rationale_parts.append("Sentimento positivo predominante.")
+
         if "adquire" in lowered or "merger" in lowered or "aquisição" in lowered:
             impact_score += 2
             rationale_parts.append("Transação corporativa detectada.")
+
+        if "demanda" in lowered or "pré-venda" in lowered or "encomenda" in lowered:
+            impact_score += 1
+            rationale_parts.append("Indicadores de demanda reforçam impacto.")
 
         impact_score = max(1, min(10, impact_score))
         if not rationale_parts:

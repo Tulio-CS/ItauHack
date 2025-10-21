@@ -84,6 +84,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Arquivo JSON com as métricas de avaliação.",
     )
     parser.add_argument(
+        "--fallback-label",
+        default=None,
+        help=(
+            "Coluna alternativa para usar como rótulo caso a coluna principal não tenha classes "
+            "suficientes (ex.: impacto_potencial gerado pelo LLM)."
+        ),
+    )
+    parser.add_argument(
         "--config",
         type=Path,
         help="Arquivo JSON com hiperparâmetros para o XGBoost.",
@@ -130,6 +138,8 @@ def main(argv: list[str] | None = None) -> None:
         )
 
     base_drop = {args.text_column, "news_category", "justificativa_impacto"}
+    if args.fallback_label:
+        base_drop.add(args.fallback_label)
     base_drop.update(label_columns)
 
     config = load_config(args.config)
@@ -139,22 +149,49 @@ def main(argv: list[str] | None = None) -> None:
     for label in label_columns:
         drop_columns = list((base_drop - {label}))
 
-        X, y = prepare_dataset(
-            enriched,
-            clusters,
-            label_column=label,
-            timestamp_column=args.timestamp_column,
-            drop_columns=drop_columns,
-        )
+        def build_dataset(target_label: str) -> tuple[pd.DataFrame, pd.Series]:
+            adjusted_drop = [col for col in drop_columns if col != target_label]
+            X_local, y_local = prepare_dataset(
+                enriched,
+                clusters,
+                label_column=target_label,
+                timestamp_column=args.timestamp_column,
+                drop_columns=adjusted_drop,
+            )
+            if args.binary_target:
+                y_binary = make_binary_target(y_local, threshold=args.threshold)
+                common_index = y_binary.index.intersection(X_local.index)
+                return X_local.loc[common_index], y_binary.loc[common_index]
+            if not pd.api.types.is_numeric_dtype(y_local):
+                y_local = y_local.astype("category").cat.codes
+            return X_local.loc[y_local.index], y_local
 
-        if args.binary_target:
-            y_binary = make_binary_target(y, threshold=args.threshold)
-            common_index = y_binary.index.intersection(X.index)
-            X = X.loc[common_index]
-            y = y_binary.loc[common_index]
-        elif not pd.api.types.is_numeric_dtype(y):
-            y = y.astype("category").cat.codes
-            X = X.loc[y.index]
+        X, y = build_dataset(label)
+        used_fallback = False
+
+        if y.nunique() < 2 and args.fallback_label:
+            fallback_label = args.fallback_label
+            if fallback_label in enriched.columns:
+                print(
+                    "Aviso: a coluna '{label}' possui apenas uma classe; "
+                    "tentando fallback '{fallback}'.".format(
+                        label=label, fallback=fallback_label
+                    )
+                )
+                X, y = build_dataset(fallback_label)
+                used_fallback = y.nunique() >= 2
+                if not used_fallback:
+                    print(
+                        "Aviso: fallback '{fallback}' também não possui classes suficientes.".format(
+                            fallback=fallback_label
+                        )
+                    )
+            else:
+                print(
+                    "Aviso: fallback '{fallback}' indisponível no dataset.".format(
+                        fallback=fallback_label
+                    )
+                )
 
         if y.nunique() < 2:
             print(
@@ -163,11 +200,16 @@ def main(argv: list[str] | None = None) -> None:
             continue
 
         model, metrics = train_xgboost_classifier(X, y, config=config)
+        metrics["_meta"] = {
+            "label_column": label,
+            "used_fallback": used_fallback,
+            "effective_label": args.fallback_label if used_fallback else label,
+        }
         metrics_by_label[label] = metrics
         trained_models[label] = model
 
         summary = {k: v for k, v in metrics.items() if k in {"accuracy", "roc_auc"}}
-        print(json.dumps({label: summary}, indent=2))
+        print(json.dumps({label: summary}, indent=2, default=float))
 
     if not metrics_by_label:
         raise SystemExit(
