@@ -161,9 +161,10 @@ def train_xgboost_classifier(
         stratify=y if len(y.unique()) > 1 else None,
     )
 
-    model = XGBClassifier(
-        objective="binary:logistic",
-        eval_metric="logloss",
+    num_classes = int(y_train.nunique())
+    is_binary = num_classes == 2
+
+    xgb_params = dict(
         learning_rate=config.learning_rate,
         max_depth=config.max_depth,
         n_estimators=config.n_estimators,
@@ -173,10 +174,22 @@ def train_xgboost_classifier(
         use_label_encoder=False,
     )
 
+    if is_binary:
+        xgb_params.update(dict(objective="binary:logistic", eval_metric="logloss"))
+    else:
+        xgb_params.update(
+            dict(objective="multi:softprob", eval_metric="mlogloss", num_class=num_classes)
+        )
+
+    model = XGBClassifier(**xgb_params)
+
     model.fit(X_train, y_train)
 
-    proba = model.predict_proba(X_test)[:, 1]
-    preds = (proba >= 0.5).astype(int)
+    proba = model.predict_proba(X_test)
+    if is_binary:
+        preds = (proba[:, 1] >= 0.5).astype(int)
+    else:
+        preds = proba.argmax(axis=1)
 
     metrics: Dict[str, object] = {
         "accuracy": float(accuracy_score(y_test, preds)),
@@ -186,29 +199,46 @@ def train_xgboost_classifier(
         ),
     }
 
-    try:
-        metrics["roc_auc"] = float(roc_auc_score(y_test, proba))
-    except ValueError:
-        metrics["roc_auc"] = None
+    if is_binary:
+        try:
+            metrics["roc_auc"] = float(roc_auc_score(y_test, proba[:, 1]))
+        except ValueError:
+            metrics["roc_auc"] = None
+    else:
+        try:
+            metrics["roc_auc"] = float(
+                roc_auc_score(y_test, proba, multi_class="ovr", average="macro")
+            )
+        except ValueError:
+            metrics["roc_auc"] = None
 
     metrics["y_test"] = y_test.reset_index(drop=True)
     metrics["y_pred"] = pd.Series(preds)
-    metrics["y_proba"] = pd.Series(proba)
+    metrics["y_proba"] = pd.Series(proba.tolist())
 
     return model, metrics
+
+
+def _make_serializable(value: object) -> object:
+    """Recursively convert valores para tipos compatíveis com JSON."""
+
+    if isinstance(value, pd.Series):
+        return value.tolist()
+    if isinstance(value, pd.Index):
+        return value.tolist()
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, dict):
+        return {k: _make_serializable(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_make_serializable(v) for v in value]
+    return value
 
 
 def persist_metrics(metrics: Dict[str, object], output_path: Path) -> None:
     """Save evaluation metrics em JSON para fácil inspeção posterior."""
 
-    serializable: Dict[str, object] = {}
-    for key, value in metrics.items():
-        if isinstance(value, pd.Series):
-            serializable[key] = value.tolist()
-        elif isinstance(value, dict):
-            serializable[key] = value
-        else:
-            serializable[key] = value
+    serializable = {key: _make_serializable(value) for key, value in metrics.items()}
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(serializable, indent=2, default=float), encoding="utf-8")
