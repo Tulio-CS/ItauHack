@@ -22,7 +22,7 @@ class GenerationConfig:
 
     model_name: str = "google/flan-t5-base"
     max_new_tokens: int = 256
-    temperature: float = 0.0
+    temperature: Optional[float] = None
     repetition_penalty: float = 1.05
 
 
@@ -65,14 +65,19 @@ class LocalLLM:
 
         inputs = self._tokenizer(prompt, return_tensors="pt")
         config = {**self.config.__dict__, **kwargs}
-        generated_tokens = self._model.generate(
+        generate_kwargs = {
             **inputs,
-            max_new_tokens=config.get("max_new_tokens", self.config.max_new_tokens),
-            temperature=config.get("temperature", self.config.temperature),
-            repetition_penalty=config.get(
+            "max_new_tokens": config.get("max_new_tokens", self.config.max_new_tokens),
+            "repetition_penalty": config.get(
                 "repetition_penalty", self.config.repetition_penalty
             ),
-        )
+        }
+        temperature = config.get("temperature", self.config.temperature)
+        if temperature is not None:
+            generate_kwargs["temperature"] = temperature
+            generate_kwargs.setdefault("do_sample", True)
+
+        generated_tokens = self._model.generate(**generate_kwargs)
         return self._tokenizer.decode(generated_tokens[0], skip_special_tokens=True)
 
 
