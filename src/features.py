@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 from collections import Counter
+import logging
 from typing import Dict, List
 
 import numpy as np
 import pandas as pd
 
 SENTIMENT_TO_NUMERIC = {"negativo": -1, "misto": 0, "neutro": 0, "positivo": 1}
+
+logger = logging.getLogger(__name__)
 
 
 def extract_metric_features(metricas: List[Dict[str, str]]) -> Dict[str, float]:
@@ -25,7 +28,8 @@ def extract_metric_features(metricas: List[Dict[str, str]]) -> Dict[str, float]:
 
 def build_feature_matrix(df: pd.DataFrame) -> pd.DataFrame:
     features: List[Dict[str, float]] = []
-    for row in df.itertuples(index=False):
+    logger.info("Construindo matriz de features para %s notícias", len(df))
+    for idx, row in enumerate(df.itertuples(index=False), start=1):
         numeric_sentiment = SENTIMENT_TO_NUMERIC.get(row.sentimento_geral.lower(), 0)
         metric_features = extract_metric_features(getattr(row, "metricas", []) or [])
         record = {
@@ -37,7 +41,10 @@ def build_feature_matrix(df: pd.DataFrame) -> pd.DataFrame:
         evento_tipo = getattr(row, "evento_tipo", "outros") or "outros"
         record[f"evento_{evento_tipo.lower().strip().replace(' ', '_')}"] = 1.0
         features.append(record)
+        if idx % 100 == 0:
+            logger.debug("%s registros de features processados", idx)
     feature_df = pd.DataFrame(features).fillna(0.0)
+    logger.info("Matriz de features final possui shape %s", feature_df.shape)
     return feature_df
 
 
@@ -54,10 +61,13 @@ def align_features(train_df: pd.DataFrame, predict_df: pd.DataFrame) -> pd.DataF
 def compute_price_impact(prices: pd.DataFrame) -> float:
     close = prices["Close"].astype(float)
     if len(close) < 2:
+        logger.debug("Preço insuficiente para calcular impacto. Registros=%s", len(close))
         return 0.0
     start = close.iloc[0]
     end = close.iloc[-1]
-    return float((end - start) / start)
+    impact = float((end - start) / start)
+    logger.debug("Impacto de preço calculado: início=%s fim=%s impacto=%.5f", start, end, impact)
+    return impact
 
 
 def compute_return_label(returns: float, threshold: float = 0.0) -> int:

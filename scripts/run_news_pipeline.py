@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sys
 from pathlib import Path
 from typing import List
@@ -27,6 +28,9 @@ from src.features import build_feature_matrix, compute_price_impact, compute_ret
 from src.modeling import save_model, train_model
 from src.news_processing import NewsAnalyzer, combine_news_frames
 from src.pricing import get_close_prices, load_price_window
+
+
+logger = logging.getLogger(__name__)
 
 
 def parse_args() -> argparse.Namespace:
@@ -75,13 +79,21 @@ def parse_args() -> argparse.Namespace:
         default=Path("reports/generated/models/news_xgb.joblib"),
         help="Path where the trained model will be stored",
     )
+    parser.add_argument(
+        "--log-level",
+        default="INFO",
+        choices=["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"],
+        help="Logging level for console output",
+    )
     return parser.parse_args()
 
 
 def load_news_frames(paths: List[str]) -> List[pd.DataFrame]:
     frames = []
     for path in paths:
+        logger.info("Carregando arquivo de notícias: %s", path)
         df = pd.read_parquet(path)
+        logger.info("%s registros encontrados em %s", len(df), path)
         frames.append(df)
     return frames
 
@@ -94,9 +106,21 @@ def enrich_with_market_data(
     default_ticker: str,
 ) -> pd.DataFrame:
     returns = []
-    for row in df.itertuples(index=False):
+    logger.info(
+        "Enriquecendo %s notícias com dados de preço (forward_days=%s)",
+        len(df),
+        forward_days,
+    )
+    for idx, row in enumerate(df.itertuples(index=False), start=1):
         event_time = pd.to_datetime(getattr(row, datetime_column))
         ticker = getattr(row, ticker_column, None) or default_ticker
+        logger.debug(
+            "[%s/%s] Baixando preços para %s em %s",
+            idx,
+            len(df),
+            ticker,
+            event_time,
+        )
         prices = load_price_window(ticker, event_time, window=forward_days)
         close_prices = get_close_prices(prices, event_time, forward_days=forward_days)
         impact = compute_price_impact(close_prices)
@@ -105,6 +129,8 @@ def enrich_with_market_data(
             "retorno_forward": impact,
             "impact_label": label,
         })
+        if idx % 25 == 0:
+            logger.info("%s/%s notícias enriquecidas", idx, len(df))
     return pd.concat([df.reset_index(drop=True), pd.DataFrame(returns)], axis=1)
 
 
@@ -151,15 +177,23 @@ def plot_feature_importance(result, output_dir: Path) -> Path:
 
 def main() -> None:
     args = parse_args()
+
+    logging.basicConfig(
+        level=getattr(logging, args.log_level.upper()),
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    )
+    logger.info("Iniciando pipeline de notícias com parâmetros: %s", vars(args))
     output_dir = args.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 
     frames = load_news_frames(args.news_files)
     raw_news = combine_news_frames(frames)
+    logger.info("Total de notícias após combinação: %s", len(raw_news))
 
     analyzer = NewsAnalyzer()
     processed = analyzer.process_dataframe(raw_news, text_column=args.text_column)
     processed.to_parquet(output_dir / "market_moving_news.parquet", index=False)
+    logger.info("%s notícias classificadas como market-moving", len(processed))
 
     enriched = enrich_with_market_data(
         processed,
@@ -169,20 +203,30 @@ def main() -> None:
         default_ticker=args.default_ticker,
     )
     enriched.to_parquet(output_dir / "market_moving_with_returns.parquet", index=False)
+    logger.info("Dados enriquecidos salvos em %s", output_dir)
 
     features = build_feature_matrix(enriched)
     features.to_parquet(output_dir / "features.parquet", index=False)
+    logger.info("Matriz de features gerada com formato %s", features.shape)
 
     labels = enriched["impact_label"]
     result = train_model(features, labels)
     save_model(result, args.model_path)
+    logger.info("Modelo treinado e salvo em %s", args.model_path)
 
     report_path = output_dir / "classification_report.json"
     report_path.write_text(json.dumps(result.report, indent=2, ensure_ascii=False))
+    logger.info("Relatório de classificação salvo em %s", report_path)
 
     hist_path = plot_impact_distribution(enriched, output_dir)
     confusion_path = plot_confusion(result, output_dir)
     importance_path = plot_feature_importance(result, output_dir)
+    logger.info(
+        "Gráficos gerados: histograma=%s, matriz_confusão=%s, importância=%s",
+        hist_path,
+        confusion_path,
+        importance_path,
+    )
 
     summary = {
         "n_raw_news": int(len(raw_news)),
@@ -194,6 +238,7 @@ def main() -> None:
         "report_path": str(report_path),
     }
     (output_dir / "run_summary.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False))
+    logger.info("Resumo da execução: %s", summary)
 
 
 if __name__ == "__main__":

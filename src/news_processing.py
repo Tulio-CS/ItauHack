@@ -49,12 +49,18 @@ class NewsAnalyzer:
     ) -> None:
         self.llm = llm or LocalLLM()
         self.relevance_threshold = relevance_threshold
+        logger.info(
+            "NewsAnalyzer inicializado com threshold=%s e modelo=%s",
+            relevance_threshold,
+            getattr(self.llm, "config", None),
+        )
 
     def classify_relevance(self, text: str) -> str:
         prompt = RELEVANCE_PROMPT.format(news=text)
         raw_label = self.llm.generate(prompt)
         label = _canonicalize_relevance_label(raw_label)
         if label is not None:
+            logger.debug("Classificação de relevância: '%s' -> %s", text[:120], label)
             return label
 
         logger.warning(
@@ -69,6 +75,7 @@ class NewsAnalyzer:
                 "Recovered relevance label '%s' after retry.",
                 label,
             )
+            logger.debug("Classificação (retry) de relevância: '%s' -> %s", text[:120], label)
             return label
 
         logger.error(
@@ -81,6 +88,7 @@ class NewsAnalyzer:
         prompt = STRUCTURED_EVENT_PROMPT.format(news=text)
         response = self.llm.generate(prompt).strip()
         payload: Optional[Dict[str, Any]] = None
+        logger.debug("Resposta do LLM para evento estruturado: %s", response[:240])
 
         try:
             json_blob = _extract_json_blob(response)
@@ -90,6 +98,7 @@ class NewsAnalyzer:
                     extra={"raw_response": response},
                 )
             else:
+                logger.debug("JSON extraído do LLM: %s", json_blob)
                 payload = json.loads(json_blob)
         except json.JSONDecodeError as exc:
             logger.warning(
@@ -110,7 +119,8 @@ class NewsAnalyzer:
 
     def process_dataframe(self, df: pd.DataFrame, text_column: str = "headline") -> pd.DataFrame:
         records: List[Dict[str, Any]] = []
-        for row in df.itertuples(index=False):
+        logger.info("Processando dataframe com %s notícias", len(df))
+        for idx, row in enumerate(df.itertuples(index=False), start=1):
             text = getattr(row, text_column)
             relevance = self.classify_relevance(text)
             if relevance != "market_moving":
@@ -128,6 +138,9 @@ class NewsAnalyzer:
                 }
             )
             records.append(item)
+            if idx % 50 == 0:
+                logger.debug("%s notícias analisadas até agora", idx)
+        logger.info("Total de notícias market-moving selecionadas: %s", len(records))
         return pd.DataFrame(records)
 
 
@@ -135,10 +148,12 @@ def combine_news_frames(frames: Iterable[pd.DataFrame]) -> pd.DataFrame:
     """Concatenate news dataframes while dropping duplicate rows by id/headline."""
 
     combined = pd.concat(frames, ignore_index=True)
+    logger.info("Concatenando dataframes de notícias: total inicial %s", len(combined))
     if "id" in combined.columns:
         combined = combined.drop_duplicates(subset="id")
     elif "headline" in combined.columns:
         combined = combined.drop_duplicates(subset="headline")
+    logger.info("Total após remoção de duplicatas: %s", len(combined))
     return combined
 
 

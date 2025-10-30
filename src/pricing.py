@@ -2,10 +2,14 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+import logging
 from typing import Optional
 
 import pandas as pd
 import yfinance as yf
+
+
+logger = logging.getLogger(__name__)
 
 
 def load_price_window(
@@ -30,6 +34,13 @@ def load_price_window(
 
     start = (event_time - timedelta(days=window + 1)).date()
     end = (event_time + timedelta(days=window + 1)).date()
+    logger.info(
+        "Baixando preços do Yahoo Finance: ticker=%s, start=%s, end=%s, interval=%s",
+        ticker,
+        start,
+        end,
+        interval,
+    )
     history = yf.download(ticker, start=start, end=end, interval=interval, auto_adjust=True)
     history.index = pd.to_datetime(history.index)
     return history
@@ -41,6 +52,11 @@ def get_close_prices(history: pd.DataFrame, event_time: pd.Timestamp, forward_da
     history = history.sort_index()
     before = history.loc[history.index <= event_time]
     after = history.loc[history.index > event_time]
+    logger.debug(
+        "Selecionando preços de fechamento: antes=%s registros, depois=%s registros",
+        len(before),
+        len(after),
+    )
     if before.empty:
         before_price = history.head(1)
     else:

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 from pathlib import Path
 from typing import Dict, Tuple
 
@@ -21,13 +22,20 @@ class TrainingResult:
     feature_names: Tuple[str, ...]
 
 
+logger = logging.getLogger(__name__)
+
+
 def train_model(features: pd.DataFrame, labels: pd.Series, random_state: int = 42) -> TrainingResult:
+    logger.info("Iniciando treinamento com %s amostras e %s features", len(features), features.shape[1])
     X_train, X_test, y_train, y_test = train_test_split(
         features,
         labels,
         test_size=0.2,
         random_state=random_state,
         stratify=labels,
+    )
+    logger.debug(
+        "Split concluído: treino=%s, teste=%s", len(X_train), len(X_test)
     )
     model = XGBClassifier(
         n_estimators=200,
@@ -38,14 +46,17 @@ def train_model(features: pd.DataFrame, labels: pd.Series, random_state: int = 4
         objective="multi:softprob",
         eval_metric="mlogloss",
     )
+    logger.info("Treinando modelo XGBoost...")
     model.fit(X_train, y_train)
     predictions = model.predict(X_test)
     report = classification_report(y_test, predictions, output_dict=True, zero_division=0)
     confusion = confusion_matrix(y_test, predictions)
+    logger.info("Treinamento concluído. Acurácia de validação: %.3f", report.get("accuracy", 0.0))
     return TrainingResult(model=model, report=report, confusion=confusion, feature_names=tuple(features.columns))
 
 
 def save_model(result: TrainingResult, path: Path) -> None:
+    logger.info("Salvando modelo em %s", path)
     payload = {
         "model": result.model,
         "feature_names": result.feature_names,
@@ -55,6 +66,7 @@ def save_model(result: TrainingResult, path: Path) -> None:
 
 
 def load_model(path: Path) -> TrainingResult:
+    logger.info("Carregando modelo de %s", path)
     payload = joblib.load(path)
     model = payload["model"]
     feature_names = tuple(payload["feature_names"])
