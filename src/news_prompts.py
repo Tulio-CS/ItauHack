@@ -28,6 +28,20 @@ RELEVANCE_PROMPT = dedent(
 ).strip()
 
 
+RELEVANCE_RETRY_PROMPT = dedent(
+    """
+    Classifique a notícia abaixo como `market_moving`, `fluff_marketing` ou
+    `irrelevant`.
+
+    IMPORTANTE: a resposta deve conter APENAS uma dessas palavras exatamente,
+    sem comentários, exemplos ou frases adicionais.
+
+    Notícia:
+    {news}
+    """
+).strip()
+
+
 STRUCTURED_EVENT_PROMPT = dedent(
     """
     Você é um analista financeiro. Extraia as informações da notícia a seguir e

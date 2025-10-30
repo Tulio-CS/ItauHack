@@ -10,7 +10,11 @@ from typing import Any, Dict, Iterable, List, Optional
 import pandas as pd
 
 from .local_llm import LocalLLM
-from .news_prompts import RELEVANCE_PROMPT, STRUCTURED_EVENT_PROMPT
+from .news_prompts import (
+    RELEVANCE_PROMPT,
+    RELEVANCE_RETRY_PROMPT,
+    STRUCTURED_EVENT_PROMPT,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -50,13 +54,28 @@ class NewsAnalyzer:
         prompt = RELEVANCE_PROMPT.format(news=text)
         raw_label = self.llm.generate(prompt)
         label = _canonicalize_relevance_label(raw_label)
-        if label is None:
-            logger.warning(
-                "Unexpected relevance label '%s', defaulting to irrelevant",
-                raw_label.strip(),
+        if label is not None:
+            return label
+
+        logger.warning(
+            "Unrecognized relevance label '%s'. Retrying with constrained prompt.",
+            raw_label.strip(),
+        )
+        retry_prompt = RELEVANCE_RETRY_PROMPT.format(news=text)
+        retry_label = self.llm.generate(retry_prompt)
+        label = _canonicalize_relevance_label(retry_label)
+        if label is not None:
+            logger.info(
+                "Recovered relevance label '%s' after retry.",
+                label,
             )
-            return "irrelevant"
-        return label
+            return label
+
+        logger.error(
+            "Failed to classify relevance after retry. Treating as market_moving.",
+            extra={"raw_first_pass": raw_label.strip(), "raw_second_pass": retry_label.strip()},
+        )
+        return "market_moving"
 
     def extract_structured_event(self, text: str) -> StructuredEvent:
         prompt = STRUCTURED_EVENT_PROMPT.format(news=text)
