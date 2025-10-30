@@ -38,7 +38,7 @@ O código principal está em `src/news_impact_analysis.py` e expõe a classe
 Instale as dependências principais antes de rodar os exemplos:
 
 ```bash
-pip install pandas pyarrow scikit-learn xgboost yfinance openai python-dateutil
+pip install pandas pyarrow scikit-learn xgboost yfinance openai python-dateutil matplotlib seaborn
 ```
 
 > ⚠️ Caso sua rede bloqueie o PyPI, configure o proxy corporativo ou faça o
@@ -54,7 +54,7 @@ explicitamente ao construir o `NewsImpactAnalyzer`). Exemplo:
 export OPENAI_API_KEY="sk-..."
 ```
 
-## Uso Básico
+## Uso Básico (via Python)
 
 ```python
 from pathlib import Path
@@ -89,16 +89,85 @@ O DataFrame retornado contém, entre outras, as colunas:
   `sentimento_ponderado_cluster`: features de disseminação.
 - `ret_1d`, `ret_3d`, `ret_5d`: retornos realizados após 1, 3 e 5 dias.
 
-## Execução em Batch
+## Execução em Batch pela linha de comando
 
-Para analisar outro ticker ou ampliar a janela temporal, basta chamar novamente
-`prepare_dataset` e `train_model`. Reaproveite o modelo treinado para *score*
-rápido de novas notícias:
+O módulo pode ser executado diretamente para rodar todo o fluxo (carregar dados,
+treinar o XGBoost para `ret_1d`, `ret_3d`, `ret_5d`, gerar previsões, tabelas e
+gráficos). Exemplo:
+
+```bash
+python -m src.news_impact_analysis \
+  --ticker AAPL \
+  --start 2023-01-01 \
+  --end 2023-06-30 \
+  --data-dir data \
+  --output-dir reports/aapl \
+  --horizons ret_1d,ret_3d,ret_5d
+```
+
+Principais argumentos:
+
+- `--ticker`: código do ativo.
+- `--start` / `--end`: (opcionais) delimitam o período considerado.
+- `--horizons`: lista de horizontes de retorno (default `ret_1d,ret_3d,ret_5d`).
+- `--no-plots`: pule a geração de gráficos, útil para servidores sem interface.
+- `--top-features`: controla quantas features aparecem no gráfico de
+  importância.
+- `--llm-model` e `--openai-api-key`: configuram o modelo de linguagem
+  utilizado. Sem chave, o sistema cai nas heurísticas.
+
+Ao final, o CLI imprime o caminho de cada artefato gerado e um resumo numérico
+das métricas de previsão.
+
+## Saídas Geradas
+
+Todos os arquivos são gravados dentro do diretório informado em `--output-dir`
+(ou `reports/` por padrão), organizados nas pastas `tables/` e `figures/`.
+
+### Tabelas
+
+- `<ticker>_<inicio>_<fim>_dataset.parquet`: features pré-modelo, incluindo
+  `impact_score`, métricas do evento, atributos de disseminação e retornos
+  realizados.
+- `<ticker>_<inicio>_<fim>_scored.parquet`: mesmas colunas do dataset com os
+  campos `pred_ret_1d`, `pred_ret_3d`, `pred_ret_5d` adicionados (retornos em
+  formato decimal, ex.: 0.025 = 2,5%).
+- `<ticker>_<inicio>_<fim>_summary.csv`: tabela agregada com métricas por
+  horizonte (`media_retorno_real_pct`, `media_retorno_previsto_pct`, `mae_pct`,
+  `rmse_pct` e `correlacao`).
+
+### Gráficos
+
+- `<ticker>_<inicio>_<fim>_impact_vs_returns.png`: regressões mostrando a
+  relação entre a nota de impacto (1–10) e o retorno realizado em cada horizonte.
+- `<ticker>_<inicio>_<fim>_predicted_vs_real.png`: séries temporais comparando o
+  retorno realizado vs. previsto pelo XGBoost (em pontos percentuais).
+- `<ticker>_<inicio>_<fim>_feature_importance_<horizonte>.png`: barras com as
+  principais variáveis para cada horizonte previsto.
+
+## Execução em Batch (via código)
+
+Para automatizar pela API Python, você pode reaproveitar o método
+`run_full_analysis`:
 
 ```python
-new_dataset = analyzer.prepare_dataset(ticker="MSFT", start=datetime(2024, 1, 1))
-predicted = analyzer.score(new_dataset)
+from pathlib import Path
+from datetime import datetime
+from src.news_impact_analysis import build_default_analyzer
+
+analyzer = build_default_analyzer(Path("data"))
+artifacts = analyzer.run_full_analysis(
+    ticker="MSFT",
+    start=datetime(2024, 1, 1),
+    end=datetime(2024, 6, 30),
+    output_dir=Path("reports/msft"),
+)
+
+print(artifacts.summary)
 ```
+
+O objeto `AnalysisArtifacts` contém os DataFrames em memória (`dataset`,
+`scored`, `summary`) e os caminhos para as tabelas e figuras salvas.
 
 ## Estratégias de Cache
 
