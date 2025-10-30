@@ -90,6 +90,18 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Exibe as respostas brutas do LLM mesmo quando o parsing é bem-sucedido",
     )
+    parser.add_argument(
+        "--max-news",
+        type=int,
+        default=None,
+        help="Limita o número de notícias processadas (útil para testes rápidos)",
+    )
+    parser.add_argument(
+        "--progress-interval",
+        type=int,
+        default=50,
+        help="Intervalo de notícias para exibir logs de progresso do LLM",
+    )
     return parser.parse_args()
 
 
@@ -193,9 +205,19 @@ def main() -> None:
 
     frames = load_news_frames(args.news_files)
     raw_news = combine_news_frames(frames)
+    if args.max_news:
+        logger.info(
+            "Limitando processamento às primeiras %s notícias (de %s)",
+            args.max_news,
+            len(raw_news),
+        )
+        raw_news = raw_news.head(args.max_news)
     logger.info("Total de notícias após combinação: %s", len(raw_news))
 
-    analyzer = NewsAnalyzer(log_llm_responses=args.print_llm_output)
+    analyzer = NewsAnalyzer(
+        log_llm_responses=args.print_llm_output,
+        progress_interval=args.progress_interval,
+    )
     processed = analyzer.process_dataframe(raw_news, text_column=args.text_column)
     processed.to_parquet(output_dir / "market_moving_news.parquet", index=False)
     logger.info("%s notícias classificadas como market-moving", len(processed))

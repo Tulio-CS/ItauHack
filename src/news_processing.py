@@ -49,10 +49,12 @@ class NewsAnalyzer:
         llm: Optional[LocalLLM] = None,
         relevance_threshold: float = 0.5,
         log_llm_responses: bool = False,
+        progress_interval: int = 50,
     ) -> None:
         self.llm = llm or LocalLLM()
         self.relevance_threshold = relevance_threshold
         self.log_llm_responses = log_llm_responses
+        self.progress_interval = max(1, progress_interval)
         self._relevance_parser = JsonOutputParser(
             required_keys=("relevance",),
             coerce_fn=_coerce_relevance_response,
@@ -187,7 +189,8 @@ class NewsAnalyzer:
 
     def process_dataframe(self, df: pd.DataFrame, text_column: str = "headline") -> pd.DataFrame:
         records: List[Dict[str, Any]] = []
-        logger.info("Processando dataframe com %s notícias", len(df))
+        total = len(df)
+        logger.info("Processando dataframe com %s notícias", total)
         for idx, row in enumerate(df.itertuples(index=False), start=1):
             text = getattr(row, text_column)
             relevance = self.classify_relevance(text)
@@ -206,8 +209,8 @@ class NewsAnalyzer:
                 }
             )
             records.append(item)
-            if idx % 50 == 0:
-                logger.debug("%s notícias analisadas até agora", idx)
+            if idx % self.progress_interval == 0 or idx == 1:
+                logger.info("Classificadas %s/%s notícias", idx, total)
         logger.info("Total de notícias market-moving selecionadas: %s", len(records))
         return pd.DataFrame(records)
 

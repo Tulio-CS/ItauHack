@@ -21,7 +21,7 @@ class GenerationConfig:
     """Configuration for the local LLM generation."""
 
     model_name: str = "google/flan-t5-base"
-    max_new_tokens: int = 256
+    max_new_tokens: int = 128
     temperature: Optional[float] = None
     repetition_penalty: float = 1.05
 
