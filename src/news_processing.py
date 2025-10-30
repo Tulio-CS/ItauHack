@@ -82,6 +82,11 @@ class NewsAnalyzer:
                     attempt,
                     exc,
                 )
+                logger.warning(
+                    "Resposta bruta do LLM (relevância, tentativa %s): %s",
+                    attempt,
+                    response,
+                )
                 continue
 
             raw_label = str(payload.get("relevance", ""))
@@ -95,9 +100,9 @@ class NewsAnalyzer:
             return label
 
         logger.warning(
-            "Não foi possível obter JSON válido de relevância após %s tentativas; aplicando heurísticas.",
+            "Não foi possível obter JSON válido de relevância após %s tentativas; aplicando heurísticas. Última resposta: %s",
             len(prompts),
-            extra={"ultima_resposta": last_response},
+            last_response,
         )
         return _canonicalize_relevance_label(last_response or "")
 
@@ -127,14 +132,19 @@ class NewsAnalyzer:
                     attempt,
                     exc,
                 )
+                logger.warning(
+                    "Resposta bruta do LLM (evento estruturado, tentativa %s): %s",
+                    attempt,
+                    response,
+                )
                 continue
 
             break
 
         if not isinstance(payload, dict):
             logger.error(
-                "Não foi possível obter JSON estruturado do LLM; utilizando payload padrão.",
-                extra={"ultima_resposta": last_response},
+                "Não foi possível obter JSON estruturado do LLM; utilizando payload padrão. Última resposta: %s",
+                last_response,
             )
             payload = _build_fallback_payload(text=text, response=last_response or "")
         else:
