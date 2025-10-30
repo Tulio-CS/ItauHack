@@ -1,6 +1,7 @@
 """High level orchestration logic for the news analysis workflow."""
 from __future__ import annotations
 
+import json
 import logging
 import re
 from dataclasses import dataclass, field
@@ -64,7 +65,9 @@ class NewsAnalyzer:
 
     def classify_relevance(self, text: str) -> str:
         prompts = (RELEVANCE_PROMPT, RELEVANCE_RETRY_PROMPT)
+        total_attempts = len(prompts)
         last_response: Optional[str] = None
+        payload: Optional[Dict[str, Any]] = None
 
         for attempt, template in enumerate(prompts, start=1):
             prompt = template.format(news=text, previous_response=last_response or "")
@@ -96,7 +99,14 @@ class NewsAnalyzer:
                     attempt,
                     response,
                 )
-                continue
+                if attempt == total_attempts:
+                    payload = _repair_relevance_response(response)
+                    logger.info(
+                        "Reconstruindo JSON de relevância com heurísticas: %s",
+                        payload,
+                    )
+                else:
+                    continue
 
             raw_label = str(payload.get("relevance", ""))
             label = _canonicalize_relevance_label(raw_label)
@@ -106,6 +116,14 @@ class NewsAnalyzer:
                 text[:120],
                 label,
             )
+            if self.log_llm_responses:
+                final_payload = {"relevance": label}
+                logger.info(
+                    "JSON final de relevância (tentativa %s): %s",
+                    attempt,
+                    final_payload,
+                )
+                print(json.dumps(final_payload, ensure_ascii=False))
             return label
 
         logger.warning(
@@ -165,6 +183,10 @@ class NewsAnalyzer:
             payload = _build_fallback_payload(text=text, response=last_response or "")
         else:
             payload = _normalize_event_payload(payload)
+
+        if self.log_llm_responses and isinstance(payload, dict):
+            logger.info("JSON final de evento estruturado: %s", payload)
+            print(json.dumps(payload, ensure_ascii=False))
 
         return StructuredEvent.from_json(payload)
 
@@ -254,6 +276,13 @@ def _canonicalize_relevance_label(raw_label: str) -> str:
         return "fluff_marketing"
 
     return "irrelevant"
+
+
+def _repair_relevance_response(response: str) -> Dict[str, Any]:
+    """Build a minimal JSON payload when the LLM omits braces."""
+
+    label = _canonicalize_relevance_label(response)
+    return {"relevance": label}
 
 
 def _build_fallback_payload(*, text: str, response: str) -> Dict[str, Any]:

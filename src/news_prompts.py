@@ -7,24 +7,25 @@ from textwrap import dedent
 
 RELEVANCE_PROMPT = dedent(
     """
-    Você é um analista de mercado extremamente criterioso. Classifique a notícia
-    abaixo em uma das seguintes categorias: `market_moving`, `fluff_marketing`
-    ou `irrelevant`.
+    You are a meticulous market analyst. Classify the headline below using one
+    of the following categories: `market_moving`, `fluff_marketing`, or
+    `irrelevant`.
 
-    Regras:
-    - `market_moving`: eventos que podem influenciar lucros, produção,
-      demissões, fusões, processos, novas diretrizes e qualquer informação que
-      afete diretamente o desempenho financeiro ou operacional da empresa.
-    - `fluff_marketing`: campanhas promocionais, matérias institucionais,
-      premiações, iniciativas sociais ou entrevistas genéricas.
-    - `irrelevant`: notícias sem relação com o desempenho ou com a empresa
-      citada.
+    Guidelines:
+    - `market_moving`: events that can influence profits, production, layoffs,
+      mergers, lawsuits, new guidance, or any fact that affects the financial or
+      operational performance of the company.
+    - `fluff_marketing`: promotional campaigns, institutional pieces, awards,
+      social initiatives, or generic interviews.
+    - `irrelevant`: headlines unrelated to the company performance.
 
-    Responda **exclusivamente** com um JSON válido no formato:
+    Respond **only** with a valid JSON object using double quotes. Examples of
+    valid answers:
     {{"relevance": "market_moving"}}
-    (use um dos três rótulos descritos).
+    {{"relevance": "fluff_marketing"}}
+    {{"relevance": "irrelevant"}}
 
-    Notícia:
+    Headline:
     {news}
     """
 ).strip()
@@ -32,15 +33,16 @@ RELEVANCE_PROMPT = dedent(
 
 RELEVANCE_RETRY_PROMPT = dedent(
     """
-    A resposta anterior não estava em JSON válido ou não usou o rótulo correto.
-    Gere novamente UM JSON válido no formato:
+    The previous answer was invalid. Produce EXACTLY ONE valid JSON object in
+    the format:
     {{"relevance": "market_moving"}}
-    (o valor deve ser `market_moving`, `fluff_marketing` ou `irrelevant`).
+    The value must be `market_moving`, `fluff_marketing`, or `irrelevant`.
+    Do not add explanations, line breaks, or additional text.
 
-    Notícia:
+    Headline:
     {news}
 
-    Resposta anterior:
+    Previous answer:
     {previous_response}
     """
 ).strip()
@@ -48,30 +50,30 @@ RELEVANCE_RETRY_PROMPT = dedent(
 
 STRUCTURED_EVENT_PROMPT = dedent(
     """
-    Você é um analista financeiro. Extraia as informações da notícia a seguir e
-    produza um JSON com o seguinte formato (chaves obrigatórias):
+    You are a financial analyst. Extract the key facts from the headline below
+    and output a JSON object that matches the schema (all keys are required):
 
     {{
-      "evento_tipo": string com o melhor resumo do evento,
+      "evento_tipo": string summarising the main event,
       "sentimento_geral": "positivo" | "negativo" | "neutro" | "misto",
       "impacto": {{
-        "nota": número inteiro de 1 a 10 sobre o impacto potencial no preço,
-        "justificativa": breve justificativa textual (máx. 40 palavras)
+        "nota": integer from 1 to 10 describing potential price impact,
+        "justificativa": short textual justification (max 40 words)
       }},
       "metricas": [
         {{
-          "metrica": nome da métrica (ex: receita, EPS, guidance, produção),
-          "valor": número ou null se ausente,
-          "expectativa": número ou null se mencionada,
+          "metrica": metric name (e.g. receita, EPS, guidance, produção),
+          "valor": number or null when not provided,
+          "expectativa": number or null when mentioned,
           "resultado": "beat" | "miss" | "inline" | "desconhecido"
         }}
       ]
     }}
 
-    Siga etapas de raciocínio internamente e responda **SOMENTE** com o JSON
-    final.
+    Think through the reasoning privately and answer **ONLY** with the final
+    JSON object, using double quotes.
 
-    Notícia:
+    Headline:
     {news}
     """
 ).strip()
@@ -79,30 +81,29 @@ STRUCTURED_EVENT_PROMPT = dedent(
 
 STRUCTURED_EVENT_RETRY_PROMPT = dedent(
     """
-    A resposta anterior não estava em JSON válido. Gere novamente um JSON
-    seguindo exatamente o formato indicado abaixo (todas as chaves são
-    obrigatórias):
+    The previous answer was invalid. Regenerate ONE valid JSON object following
+    the exact schema below (all keys are mandatory and must use double quotes):
 
     {{
       "evento_tipo": string,
       "sentimento_geral": "positivo" | "negativo" | "neutro" | "misto",
-      "impacto": {{"nota": inteiro 1-10, "justificativa": string}},
+      "impacto": {{"nota": integer 1-10, "justificativa": string}},
       "metricas": [
         {{
           "metrica": string,
-          "valor": número ou null,
-          "expectativa": número ou null,
+          "valor": number or null,
+          "expectativa": number or null,
           "resultado": "beat" | "miss" | "inline" | "desconhecido"
         }}
       ]
     }}
 
-    Produza apenas o JSON final, sem comentários.
+    Output only the JSON object. Do not add commentary.
 
-    Notícia:
+    Headline:
     {news}
 
-    Resposta anterior:
+    Previous answer:
     {previous_response}
     """
 ).strip()
