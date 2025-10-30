@@ -47,9 +47,11 @@ class NewsAnalyzer:
         self,
         llm: Optional[LocalLLM] = None,
         relevance_threshold: float = 0.5,
+        log_llm_responses: bool = False,
     ) -> None:
         self.llm = llm or LocalLLM()
         self.relevance_threshold = relevance_threshold
+        self.log_llm_responses = log_llm_responses
         self._relevance_parser = JsonOutputParser(required_keys=("relevance",))
         self._event_parser = JsonOutputParser(
             required_keys=("evento_tipo", "sentimento_geral", "impacto", "metricas")
@@ -68,6 +70,13 @@ class NewsAnalyzer:
             prompt = template.format(news=text, previous_response=last_response or "")
             response = self.llm.generate(prompt).strip()
             last_response = response
+            if self.log_llm_responses:
+                logger.info(
+                    "LLM (relevância, tentativa %s) -> %s",
+                    attempt,
+                    response,
+                )
+                print(response)
             logger.debug(
                 "Resposta do LLM para relevância (tentativa %s): %s",
                 attempt,
@@ -118,6 +127,13 @@ class NewsAnalyzer:
             prompt = template.format(news=text, previous_response=last_response or "")
             response = self.llm.generate(prompt).strip()
             last_response = response
+            if self.log_llm_responses:
+                logger.info(
+                    "LLM (evento estruturado, tentativa %s) -> %s",
+                    attempt,
+                    response,
+                )
+                print(response)
             logger.debug(
                 "Resposta do LLM para evento estruturado (tentativa %s): %s",
                 attempt,

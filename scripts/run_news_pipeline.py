@@ -85,6 +85,11 @@ def parse_args() -> argparse.Namespace:
         choices=["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"],
         help="Logging level for console output",
     )
+    parser.add_argument(
+        "--print-llm-output",
+        action="store_true",
+        help="Exibe as respostas brutas do LLM mesmo quando o parsing é bem-sucedido",
+    )
     return parser.parse_args()
 
 
@@ -190,7 +195,7 @@ def main() -> None:
     raw_news = combine_news_frames(frames)
     logger.info("Total de notícias após combinação: %s", len(raw_news))
 
-    analyzer = NewsAnalyzer()
+    analyzer = NewsAnalyzer(log_llm_responses=args.print_llm_output)
     processed = analyzer.process_dataframe(raw_news, text_column=args.text_column)
     processed.to_parquet(output_dir / "market_moving_news.parquet", index=False)
     logger.info("%s notícias classificadas como market-moving", len(processed))
