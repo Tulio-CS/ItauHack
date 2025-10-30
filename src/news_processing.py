@@ -53,7 +53,10 @@ class NewsAnalyzer:
         self.llm = llm or LocalLLM()
         self.relevance_threshold = relevance_threshold
         self.log_llm_responses = log_llm_responses
-        self._relevance_parser = JsonOutputParser(required_keys=("relevance",))
+        self._relevance_parser = JsonOutputParser(
+            required_keys=("relevance",),
+            coerce_fn=_coerce_relevance_response,
+        )
         self._event_parser = JsonOutputParser(
             required_keys=("evento_tipo", "sentimento_geral", "impacto", "metricas")
         )
@@ -65,7 +68,6 @@ class NewsAnalyzer:
 
     def classify_relevance(self, text: str) -> str:
         prompts = (RELEVANCE_PROMPT, RELEVANCE_RETRY_PROMPT)
-        total_attempts = len(prompts)
         last_response: Optional[str] = None
         payload: Optional[Dict[str, Any]] = None
 
@@ -99,14 +101,7 @@ class NewsAnalyzer:
                     attempt,
                     response,
                 )
-                if attempt == total_attempts:
-                    payload = _repair_relevance_response(response)
-                    logger.info(
-                        "Reconstruindo JSON de relevância com heurísticas: %s",
-                        payload,
-                    )
-                else:
-                    continue
+                continue
 
             raw_label = str(payload.get("relevance", ""))
             label = _canonicalize_relevance_label(raw_label)
@@ -275,13 +270,20 @@ def _canonicalize_relevance_label(raw_label: str) -> str:
     if "fluff" in cleaned or "marketing" in cleaned:
         return "fluff_marketing"
 
-    return "irrelevant"
+    logger.debug(
+        "Não foi possível identificar claramente o rótulo '%s'; assumindo market_moving",
+        raw_label,
+    )
+    return "market_moving"
 
 
-def _repair_relevance_response(response: str) -> Dict[str, Any]:
-    """Build a minimal JSON payload when the LLM omits braces."""
+def _coerce_relevance_response(response: str) -> Dict[str, Any]:
+    """Coerce free-form relevance outputs into the expected JSON payload."""
 
     label = _canonicalize_relevance_label(response)
+    if not label:
+        raise OutputParserError("Unable to infer relevance label from LLM output")
+    logger.debug("Reconstruindo JSON de relevância: %s -> %s", response, label)
     return {"relevance": label}
 
 

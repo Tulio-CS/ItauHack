@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import Iterable, MutableMapping, Optional
+from typing import Callable, Iterable, MutableMapping, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -59,22 +59,47 @@ class JsonOutputParser:
 
     required_keys: Iterable[str] = field(default_factory=tuple)
     allow_partial: bool = False
+    coerce_fn: Optional[Callable[[str], MutableMapping[str, object]]] = None
 
     def parse(self, response: str) -> MutableMapping[str, object]:
         json_blob = extract_json_blob(response)
-        if json_blob is None:
+        payload: Optional[MutableMapping[str, object]] = None
+
+        if json_blob is not None:
+            try:
+                payload = json.loads(json_blob)
+            except json.JSONDecodeError as exc:  # pragma: no cover - defensive
+                raise OutputParserError("Invalid JSON returned by LLM") from exc
+
+            if not isinstance(payload, MutableMapping):
+                raise OutputParserError("LLM JSON root must be an object")
+        elif self.coerce_fn is not None:
+            try:
+                payload = self.coerce_fn(response)
+            except OutputParserError:
+                raise
+            except Exception as exc:  # pragma: no cover - defensive
+                raise OutputParserError("Failed to coerce LLM response into JSON") from exc
+            else:
+                logger.debug(
+                    "Coerced LLM response into JSON via %s", self.coerce_fn.__name__
+                )
+
+        if payload is None:
             raise OutputParserError("No JSON object detected in LLM response")
-
-        try:
-            payload = json.loads(json_blob)
-        except json.JSONDecodeError as exc:  # pragma: no cover - defensive
-            raise OutputParserError("Invalid JSON returned by LLM") from exc
-
-        if not isinstance(payload, MutableMapping):
-            raise OutputParserError("LLM JSON root must be an object")
 
         missing = [key for key in self.required_keys if key not in payload]
         if missing and not self.allow_partial:
-            raise OutputParserError(f"Missing keys in LLM JSON: {missing}")
+            if self.coerce_fn is not None and json_blob is not None:
+                try:
+                    payload = self.coerce_fn(response)
+                except OutputParserError:
+                    raise
+                except Exception as exc:  # pragma: no cover - defensive
+                    raise OutputParserError("Failed to coerce LLM response into JSON") from exc
+                else:
+                    missing = [key for key in self.required_keys if key not in payload]
+            if missing and not self.allow_partial:
+                raise OutputParserError(f"Missing keys in LLM JSON: {missing}")
 
         return payload
