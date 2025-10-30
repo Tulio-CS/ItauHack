@@ -3,12 +3,25 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import List
 
 import matplotlib.pyplot as plt
 import pandas as pd
 from sklearn.metrics import ConfusionMatrixDisplay
+
+
+def _ensure_repo_root_on_path() -> None:
+    """Add the project root to ``sys.path`` when the script is executed directly."""
+
+    repo_root = Path(__file__).resolve().parents[1]
+    repo_root_str = str(repo_root)
+    if repo_root_str not in sys.path:
+        sys.path.insert(0, repo_root_str)
+
+
+_ensure_repo_root_on_path()
 
 from src.features import build_feature_matrix, compute_price_impact, compute_return_label
 from src.modeling import save_model, train_model
