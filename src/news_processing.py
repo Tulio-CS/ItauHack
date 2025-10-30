@@ -80,22 +80,32 @@ class NewsAnalyzer:
     def extract_structured_event(self, text: str) -> StructuredEvent:
         prompt = STRUCTURED_EVENT_PROMPT.format(news=text)
         response = self.llm.generate(prompt).strip()
-        payload: Dict[str, Any]
+        payload: Optional[Dict[str, Any]] = None
+
         try:
             json_blob = _extract_json_blob(response)
             payload = json.loads(json_blob)
-        except (json.JSONDecodeError, ValueError) as exc:
+        except json.JSONDecodeError as exc:
             logger.error(
-                "Failed to parse LLM JSON response, returning fallback: %s",
-                response,
+                "Failed to decode LLM JSON response; falling back to default payload.",
                 exc_info=exc,
+                extra={"raw_response": response},
             )
-            payload = {
-                "evento_tipo": "desconhecido",
-                "sentimento_geral": "neutro",
-                "impacto": {"nota": 1, "justificativa": "Falha ao analisar"},
-                "metricas": [],
-            }
+        except ValueError as exc:
+            logger.error(
+                "LLM response did not contain JSON; falling back to default payload.",
+                exc_info=exc,
+                extra={"raw_response": response},
+            )
+        except Exception as exc:  # pragma: no cover - defensive guardrail
+            logger.exception(
+                "Unexpected error while extracting structured event; using fallback payload.",
+                extra={"raw_response": response},
+            )
+
+        if not isinstance(payload, dict):
+            payload = _build_fallback_payload(text=text, response=response)
+
         return StructuredEvent.from_json(payload)
 
     def process_dataframe(self, df: pd.DataFrame, text_column: str = "headline") -> pd.DataFrame:
@@ -209,3 +219,23 @@ def _extract_json_blob(response: str) -> str:
                 return stripped[start : idx + 1]
 
     raise ValueError("Unbalanced JSON braces in response")
+
+
+def _build_fallback_payload(*, text: str, response: str) -> Dict[str, Any]:
+    """Return a minimal payload when the LLM could not produce valid JSON."""
+
+    justificativa = (
+        "LLM nao retornou JSON estruturado. Resposta original: "
+        f"{response[:240]}"
+    )
+    return {
+        "evento_tipo": "desconhecido",
+        "sentimento_geral": "neutro",
+        "impacto": {"nota": 1, "justificativa": justificativa},
+        "metricas": [
+            {
+                "metrica": "headline_resumida",
+                "valor": text[:240],
+            }
+        ],
+    }
