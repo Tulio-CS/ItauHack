@@ -20,7 +20,9 @@ RELEVANCE_PROMPT = dedent(
     - `irrelevant`: notícias sem relação com o desempenho ou com a empresa
       citada.
 
-    Responda somente com o rótulo final sem explicações adicionais.
+    Responda **exclusivamente** com um JSON válido no formato:
+    {{"relevance": "market_moving"}}
+    (use um dos três rótulos descritos).
 
     Notícia:
     {news}
@@ -30,14 +32,16 @@ RELEVANCE_PROMPT = dedent(
 
 RELEVANCE_RETRY_PROMPT = dedent(
     """
-    Classifique a notícia abaixo como `market_moving`, `fluff_marketing` ou
-    `irrelevant`.
-
-    IMPORTANTE: a resposta deve conter APENAS uma dessas palavras exatamente,
-    sem comentários, exemplos ou frases adicionais.
+    A resposta anterior não estava em JSON válido ou não usou o rótulo correto.
+    Gere novamente UM JSON válido no formato:
+    {{"relevance": "market_moving"}}
+    (o valor deve ser `market_moving`, `fluff_marketing` ou `irrelevant`).
 
     Notícia:
     {news}
+
+    Resposta anterior:
+    {previous_response}
     """
 ).strip()
 
@@ -64,9 +68,41 @@ STRUCTURED_EVENT_PROMPT = dedent(
       ]
     }}
 
-    Siga etapas de raciocínio internamente e responda SOMENTE com o JSON final.
+    Siga etapas de raciocínio internamente e responda **SOMENTE** com o JSON
+    final.
 
     Notícia:
     {news}
+    """
+).strip()
+
+
+STRUCTURED_EVENT_RETRY_PROMPT = dedent(
+    """
+    A resposta anterior não estava em JSON válido. Gere novamente um JSON
+    seguindo exatamente o formato indicado abaixo (todas as chaves são
+    obrigatórias):
+
+    {{
+      "evento_tipo": string,
+      "sentimento_geral": "positivo" | "negativo" | "neutro" | "misto",
+      "impacto": {{"nota": inteiro 1-10, "justificativa": string}},
+      "metricas": [
+        {{
+          "metrica": string,
+          "valor": número ou null,
+          "expectativa": número ou null,
+          "resultado": "beat" | "miss" | "inline" | "desconhecido"
+        }}
+      ]
+    }}
+
+    Produza apenas o JSON final, sem comentários.
+
+    Notícia:
+    {news}
+
+    Resposta anterior:
+    {previous_response}
     """
 ).strip()

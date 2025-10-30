@@ -1,7 +1,6 @@
 """High level orchestration logic for the news analysis workflow."""
 from __future__ import annotations
 
-import json
 import logging
 import re
 from dataclasses import dataclass, field
@@ -14,7 +13,9 @@ from .news_prompts import (
     RELEVANCE_PROMPT,
     RELEVANCE_RETRY_PROMPT,
     STRUCTURED_EVENT_PROMPT,
+    STRUCTURED_EVENT_RETRY_PROMPT,
 )
+from .output_parsers import JsonOutputParser, OutputParserError
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +50,10 @@ class NewsAnalyzer:
     ) -> None:
         self.llm = llm or LocalLLM()
         self.relevance_threshold = relevance_threshold
+        self._relevance_parser = JsonOutputParser(required_keys=("relevance",))
+        self._event_parser = JsonOutputParser(
+            required_keys=("evento_tipo", "sentimento_geral", "impacto", "metricas")
+        )
         logger.info(
             "NewsAnalyzer inicializado com threshold=%s e modelo=%s",
             relevance_threshold,
@@ -56,64 +61,84 @@ class NewsAnalyzer:
         )
 
     def classify_relevance(self, text: str) -> str:
-        prompt = RELEVANCE_PROMPT.format(news=text)
-        raw_label = self.llm.generate(prompt)
-        label = _canonicalize_relevance_label(raw_label)
-        if label is not None:
-            logger.debug("Classificação de relevância: '%s' -> %s", text[:120], label)
+        prompts = (RELEVANCE_PROMPT, RELEVANCE_RETRY_PROMPT)
+        last_response: Optional[str] = None
+
+        for attempt, template in enumerate(prompts, start=1):
+            prompt = template.format(news=text, previous_response=last_response or "")
+            response = self.llm.generate(prompt).strip()
+            last_response = response
+            logger.debug(
+                "Resposta do LLM para relevância (tentativa %s): %s",
+                attempt,
+                response,
+            )
+
+            try:
+                payload = self._relevance_parser.parse(response)
+            except OutputParserError as exc:
+                logger.info(
+                    "Falha ao interpretar JSON de relevância (tentativa %s): %s",
+                    attempt,
+                    exc,
+                )
+                continue
+
+            raw_label = str(payload.get("relevance", ""))
+            label = _canonicalize_relevance_label(raw_label)
+            logger.debug(
+                "Classificação de relevância (tentativa %s): '%s' -> %s",
+                attempt,
+                text[:120],
+                label,
+            )
             return label
 
         logger.warning(
-            "Unrecognized relevance label '%s'. Retrying with constrained prompt.",
-            raw_label.strip(),
+            "Não foi possível obter JSON válido de relevância após %s tentativas; aplicando heurísticas.",
+            len(prompts),
+            extra={"ultima_resposta": last_response},
         )
-        retry_prompt = RELEVANCE_RETRY_PROMPT.format(news=text)
-        retry_label = self.llm.generate(retry_prompt)
-        label = _canonicalize_relevance_label(retry_label)
-        if label is not None:
-            logger.info(
-                "Recovered relevance label '%s' after retry.",
-                label,
-            )
-            logger.debug("Classificação (retry) de relevância: '%s' -> %s", text[:120], label)
-            return label
-
-        logger.error(
-            "Failed to classify relevance after retry. Treating as market_moving.",
-            extra={"raw_first_pass": raw_label.strip(), "raw_second_pass": retry_label.strip()},
-        )
-        return "market_moving"
+        return _canonicalize_relevance_label(last_response or "")
 
     def extract_structured_event(self, text: str) -> StructuredEvent:
-        prompt = STRUCTURED_EVENT_PROMPT.format(news=text)
-        response = self.llm.generate(prompt).strip()
+        prompts = (
+            STRUCTURED_EVENT_PROMPT,
+            STRUCTURED_EVENT_RETRY_PROMPT,
+        )
+        last_response: Optional[str] = None
         payload: Optional[Dict[str, Any]] = None
-        logger.debug("Resposta do LLM para evento estruturado: %s", response[:240])
 
-        try:
-            json_blob = _extract_json_blob(response)
-            if json_blob is None:
+        for attempt, template in enumerate(prompts, start=1):
+            prompt = template.format(news=text, previous_response=last_response or "")
+            response = self.llm.generate(prompt).strip()
+            last_response = response
+            logger.debug(
+                "Resposta do LLM para evento estruturado (tentativa %s): %s",
+                attempt,
+                response[:240],
+            )
+
+            try:
+                payload = dict(self._event_parser.parse(response))
+            except OutputParserError as exc:
                 logger.info(
-                    "LLM response did not contain JSON; falling back to default payload.",
-                    extra={"raw_response": response},
+                    "Falha ao interpretar JSON de evento estruturado (tentativa %s): %s",
+                    attempt,
+                    exc,
                 )
-            else:
-                logger.debug("JSON extraído do LLM: %s", json_blob)
-                payload = json.loads(json_blob)
-        except json.JSONDecodeError as exc:
-            logger.warning(
-                "Failed to decode LLM JSON response; falling back to default payload (%s).",
-                exc,
-                extra={"raw_response": response},
-            )
-        except Exception as exc:  # pragma: no cover - defensive guardrail
-            logger.exception(
-                "Unexpected error while extracting structured event; using fallback payload.",
-                extra={"raw_response": response},
-            )
+                continue
+
+            break
 
         if not isinstance(payload, dict):
-            payload = _build_fallback_payload(text=text, response=response)
+            logger.error(
+                "Não foi possível obter JSON estruturado do LLM; utilizando payload padrão.",
+                extra={"ultima_resposta": last_response},
+            )
+            payload = _build_fallback_payload(text=text, response=last_response or "")
+        else:
+            payload = _normalize_event_payload(payload)
 
         return StructuredEvent.from_json(payload)
 
@@ -169,25 +194,22 @@ _CANONICAL_LABELS = {
 }
 
 
-def _canonicalize_relevance_label(raw_label: str) -> Optional[str]:
-    """Map raw LLM outputs to one of the expected relevance categories."""
+def _canonicalize_relevance_label(raw_label: str) -> str:
+    """Map raw LLM outputs to the expected relevance categories."""
 
     if not raw_label:
-        return None
+        return "market_moving"
 
     cleaned = raw_label.strip().lower()
-    # Prefer direct exact matches first
     if cleaned in _KNOWN_LABELS:
         return cleaned
 
     first_line = cleaned.splitlines()[0]
-    # Strip trailing explanations like "market_moving: ..."
     for delimiter in (":", "-", "|", ";"):
         if delimiter in first_line:
             first_line = first_line.split(delimiter, 1)[0]
     first_line = first_line.strip()
 
-    # Replace separators and remove stray characters
     normalized = first_line.replace("/", "_").replace(" ", "_")
     normalized = re.sub(r"[^a-z_]+", "", normalized)
 
@@ -196,45 +218,16 @@ def _canonicalize_relevance_label(raw_label: str) -> Optional[str]:
     if normalized in _CANONICAL_LABELS:
         return _CANONICAL_LABELS[normalized]
 
-    # As a last resort, look for keywords inside the full response
     for label in _KNOWN_LABELS:
         if label in cleaned:
             return label
+
     if "market" in cleaned and "moving" in cleaned:
         return "market_moving"
     if "fluff" in cleaned or "marketing" in cleaned:
         return "fluff_marketing"
-    return None
 
-
-def _extract_json_blob(response: str) -> Optional[str]:
-    """Return the JSON object present in ``response`` if the LLM adds wrappers."""
-
-    if not response:
-        return None
-
-    # If the response already looks like a JSON object, return it directly
-    stripped = response.strip()
-    if stripped.startswith("{") and stripped.endswith("}"):
-        return stripped
-
-    # Attempt to find the first JSON object using a stack to match braces
-    start = stripped.find("{")
-    if start == -1:
-        return None
-
-    depth = 0
-    for idx in range(start, len(stripped)):
-        char = stripped[idx]
-        if char == "{":
-            depth += 1
-        elif char == "}":
-            depth -= 1
-            if depth == 0:
-                return stripped[start : idx + 1]
-
-    logger.debug("Detected unbalanced JSON braces in LLM response", extra={"raw_response": response})
-    return None
+    return "irrelevant"
 
 
 def _build_fallback_payload(*, text: str, response: str) -> Dict[str, Any]:
@@ -255,3 +248,27 @@ def _build_fallback_payload(*, text: str, response: str) -> Dict[str, Any]:
             }
         ],
     }
+
+
+def _normalize_event_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    impacto = payload.get("impacto", {})
+    if not isinstance(impacto, dict):
+        impacto = {}
+
+    metricas = payload.get("metricas", [])
+    if not isinstance(metricas, list):
+        metricas = []
+
+    payload.setdefault("evento_tipo", "desconhecido")
+    payload.setdefault("sentimento_geral", "neutro")
+    impacto.setdefault("nota", 0)
+    impacto.setdefault("justificativa", "")
+
+    normalized_metricas: List[Dict[str, Any]] = []
+    for item in metricas:
+        if isinstance(item, dict):
+            normalized_metricas.append(item)
+
+    payload["impacto"] = impacto
+    payload["metricas"] = normalized_metricas
+    return payload
