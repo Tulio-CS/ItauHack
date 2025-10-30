@@ -84,17 +84,17 @@ class NewsAnalyzer:
 
         try:
             json_blob = _extract_json_blob(response)
-            payload = json.loads(json_blob)
+            if json_blob is None:
+                logger.info(
+                    "LLM response did not contain JSON; falling back to default payload.",
+                    extra={"raw_response": response},
+                )
+            else:
+                payload = json.loads(json_blob)
         except json.JSONDecodeError as exc:
-            logger.error(
-                "Failed to decode LLM JSON response; falling back to default payload.",
-                exc_info=exc,
-                extra={"raw_response": response},
-            )
-        except ValueError as exc:
-            logger.error(
-                "LLM response did not contain JSON; falling back to default payload.",
-                exc_info=exc,
+            logger.warning(
+                "Failed to decode LLM JSON response; falling back to default payload (%s).",
+                exc,
                 extra={"raw_response": response},
             )
         except Exception as exc:  # pragma: no cover - defensive guardrail
@@ -192,11 +192,11 @@ def _canonicalize_relevance_label(raw_label: str) -> Optional[str]:
     return None
 
 
-def _extract_json_blob(response: str) -> str:
+def _extract_json_blob(response: str) -> Optional[str]:
     """Return the JSON object present in ``response`` if the LLM adds wrappers."""
 
     if not response:
-        raise ValueError("Empty response")
+        return None
 
     # If the response already looks like a JSON object, return it directly
     stripped = response.strip()
@@ -206,7 +206,7 @@ def _extract_json_blob(response: str) -> str:
     # Attempt to find the first JSON object using a stack to match braces
     start = stripped.find("{")
     if start == -1:
-        raise ValueError("No JSON object detected in response")
+        return None
 
     depth = 0
     for idx in range(start, len(stripped)):
@@ -218,7 +218,8 @@ def _extract_json_blob(response: str) -> str:
             if depth == 0:
                 return stripped[start : idx + 1]
 
-    raise ValueError("Unbalanced JSON braces in response")
+    logger.debug("Detected unbalanced JSON braces in LLM response", extra={"raw_response": response})
+    return None
 
 
 def _build_fallback_payload(*, text: str, response: str) -> Dict[str, Any]:
