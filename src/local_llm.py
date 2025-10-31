@@ -86,6 +86,27 @@ LEGAL_KEYWORDS = {
     "tribunal",
 }
 
+ANALYST_KEYWORDS = {
+    "recomendação",
+    "recomendacao",
+    "compra",
+    "venda",
+    "neutra",
+    "neutro",
+    "preço-alvo",
+    "preco-alvo",
+    "price target",
+    "rating",
+    "classificação",
+    "classificacao",
+    "upgrade",
+    "downgrade",
+    "avaliação",
+    "avaliacao",
+    "cobertura",
+    "coverage",
+}
+
 HUMAN_RESOURCES_KEYWORDS = {
     "demissão",
     "demissao",
@@ -98,6 +119,14 @@ HUMAN_RESOURCES_KEYWORDS = {
     "ceo",
     "cfo",
     "presidente",
+}
+
+EVENT_TYPE_LABELS = {
+    "earnings_report": "Resultado financeiro / guidance",
+    "product_update": "Atualização de produto ou serviço",
+    "management_or_hr": "Mudanças em gestão ou estrutura de pessoal",
+    "legal_or_regulatory": "Tema legal ou regulatório",
+    "analyst_rating": "Avaliação ou rating de analista",
 }
 
 EARNINGS_KEYWORDS = {
@@ -132,6 +161,10 @@ NEGATIVE_SENTIMENT = {
     "demite",
     "demissão",
     "demissao",
+    "contra",
+    "against",
+    "downgrade",
+    "venda",
 }
 
 POSITIVE_SENTIMENT = {
@@ -151,6 +184,10 @@ POSITIVE_SENTIMENT = {
     "avanço",
     "avanco",
     "contrata",
+    "a favor",
+    "approve",
+    "upgrade",
+    "compra",
 }
 
 
@@ -168,6 +205,9 @@ METRIC_LABELS = {
     "vendas": "sales",
     "margem": "margin",
     "guidance": "guidance",
+    "preço-alvo": "price_target",
+    "preco-alvo": "price_target",
+    "price target": "price_target",
 }
 
 
@@ -206,6 +246,8 @@ def detect_event_type(text: str) -> str:
         return "earnings_report"
     if any(word in lower for word in PRODUCT_KEYWORDS):
         return "product_update"
+    if any(word in lower for word in ANALYST_KEYWORDS):
+        return "analyst_rating"
     if any(word in lower for word in HUMAN_RESOURCES_KEYWORDS):
         return "management_or_hr"
     if any(word in lower for word in LEGAL_KEYWORDS):
@@ -213,12 +255,24 @@ def detect_event_type(text: str) -> str:
     return "general_business"
 
 
-def detect_category(text: str) -> str:
+def detect_category(text: str, *, event_type: Optional[str] = None) -> str:
+    """Classifica o texto por relevância considerando o tipo de evento."""
+
     lower = text.lower()
     if any(word in lower for word in MARKET_MOVING_KEYWORDS):
         return "Market-Moving"
     if any(word in lower for word in FLUFF_KEYWORDS):
         return "Fluff/Marketing"
+
+    if event_type in {
+        "earnings_report",
+        "product_update",
+        "management_or_hr",
+        "legal_or_regulatory",
+        "analyst_rating",
+    }:
+        return "Market-Moving"
+
     return "Irrelevante"
 
 
@@ -283,16 +337,31 @@ class LocalLLM:
         return metrics
 
     def classify(self, text: str) -> StructuredEvent:
-        categoria = detect_category(text)
         tipo_evento = detect_event_type(text)
+        categoria = detect_category(text, event_type=tipo_evento)
         sentimento = detect_sentiment(text)
         metricas = self._extract_metrics(text)
 
+        lower = text.lower()
+        market_keyword_hit = any(word in lower for word in MARKET_MOVING_KEYWORDS)
+        fluff_keyword_hit = any(word in lower for word in FLUFF_KEYWORDS)
+
         justificativa_parts: List[str] = []
         if categoria == "Market-Moving":
-            justificativa_parts.append("Contém termos de impacto direto no negócio")
+            if market_keyword_hit:
+                justificativa_parts.append("Contém termos de impacto direto no negócio")
+            else:
+                justificativa_parts.append(
+                    EVENT_TYPE_LABELS.get(
+                        tipo_evento,
+                        "Tipo de evento sugere impacto relevante",
+                    )
+                )
         elif categoria == "Fluff/Marketing":
-            justificativa_parts.append("Assunto relacionado a marketing ou branding")
+            if fluff_keyword_hit:
+                justificativa_parts.append("Assunto relacionado a marketing ou branding")
+            else:
+                justificativa_parts.append("Classificado como marketing pelo contexto geral")
         else:
             justificativa_parts.append("Ausência de gatilhos relevantes detectados")
 
