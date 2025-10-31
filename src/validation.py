@@ -77,16 +77,25 @@ def _trading_window(date: datetime, days_forward: int) -> Tuple[datetime, dateti
     return start, end
 
 
-_ALT_SUFFIXES = (".US", ".SA", ".MX", ".NE", ".TO", ".L", ".SW", ".HK")
+_COUNTRY_SUFFIXES = {
+    "BR": (".SA",),
+    "CA": (".TO",),
+    "MX": (".MX",),
+    "GB": (".L",),
+    "CH": (".SW",),
+    "HK": (".HK",),
+    "US": tuple(),
+}
 
 
-def _candidate_symbols(ticker: str) -> Sequence[str]:
+def _candidate_symbols(ticker: str, country: Optional[str]) -> Sequence[str]:
     """Generate alternative symbols that yfinance may accept.
 
-    We first yield the original ticker and then append a few common suffixes that
-    map to alternative exchanges (ex.: ``.US`` for Stooq listings). This helps
-    when Yahoo Finance lacks timezone metadata for the canonical ticker
-    (``YFTzMissingError``), which otherwise results in empty downloads.
+    The canonical ticker is always yielded first. We then add variations that
+    swap ``.`` and ``-`` to handle symbols like ``BRK.B``. Exchange suffixes are
+    appended only when a country hint is provided (e.g., ``BR`` -> ``.SA``),
+    avoiding guesses such as ``F.MX`` when the ticker already corresponds to a
+    U.S.-listed security.
     """
 
     normalized = ticker.strip()
@@ -96,15 +105,12 @@ def _candidate_symbols(ticker: str) -> Sequence[str]:
             seen.add(symbol)
             yield symbol
 
-    # Fallback to alternate exchanges only if the canonical ticker is short and
-    # alphanumeric (e.g., ``F`` -> ``F.US``)
-    base = normalized.split(".")[0]
-    if base.isalpha() and 1 <= len(base) <= 5:
-        for suffix in _ALT_SUFFIXES:
-            candidate = f"{base}{suffix}"
-            if candidate not in seen:
-                seen.add(candidate)
-                yield candidate
+    country_code = (country or "").strip().upper()
+    for suffix in _COUNTRY_SUFFIXES.get(country_code, tuple()):
+        candidate = f"{normalized}{suffix}" if not normalized.endswith(suffix) else normalized
+        if candidate not in seen:
+            seen.add(candidate)
+            yield candidate
 
 
 def _attempt_download(symbol: str, start_date: date, end_date: date):
@@ -142,7 +148,9 @@ def _attempt_history(symbol: str, start_date: date, end_date: date):
         return None
 
 
-def _fetch_price_series(ticker: str, start: datetime, end: datetime) -> pd.Series:
+def _fetch_price_series(
+    ticker: str, start: datetime, end: datetime, country: Optional[str]
+) -> pd.Series:
     if yf is None:  # pragma: no cover - dependency guidance
         raise RuntimeError(
             "O pacote 'yfinance' é necessário para baixar preços. "
@@ -166,7 +174,7 @@ def _fetch_price_series(ticker: str, start: datetime, end: datetime) -> pd.Serie
     request_end_date = effective_end_date + timedelta(days=1)
 
     attempted_symbols = []
-    for symbol in _candidate_symbols(ticker):
+    for symbol in _candidate_symbols(ticker, country):
         attempted_symbols.append(symbol)
         LOGGER.debug(
             "Baixando preços para %s (tentativa %s) de %s a %s",
@@ -279,7 +287,9 @@ def evaluate_predictions(
             window_start, window_end = _trading_window(event_dt, max(horizons))
 
             try:
-                price_series = _fetch_price_series(ticker, window_start, window_end)
+                price_series = _fetch_price_series(
+                    ticker, window_start, window_end, raw.get("country")
+                )
             except Exception as exc:  # pragma: no cover - network variability
                 LOGGER.warning("Falha ao obter preços para %s (%s): %s", ticker, raw.get("id"), exc)
                 continue
