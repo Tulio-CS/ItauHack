@@ -7,7 +7,7 @@ import json
 import logging
 import math
 from collections import Counter, defaultdict
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -107,12 +107,12 @@ def _candidate_symbols(ticker: str) -> Sequence[str]:
                 yield candidate
 
 
-def _attempt_download(symbol: str, start: datetime, end: datetime):
+def _attempt_download(symbol: str, start_date: date, end_date: date):
     try:
         return yf.download(
             symbol,
-            start=start.date(),
-            end=end.date() + timedelta(days=1),
+            start=start_date,
+            end=end_date,
             progress=False,
             threads=False,
         )
@@ -121,11 +121,11 @@ def _attempt_download(symbol: str, start: datetime, end: datetime):
         return None
 
 
-def _attempt_history(symbol: str, start: datetime, end: datetime):
+def _attempt_history(symbol: str, start_date: date, end_date: date):
     ticker_client = yf.Ticker(symbol)
     history_kwargs = {
-        "start": start.date(),
-        "end": end.date() + timedelta(days=1),
+        "start": start_date,
+        "end": end_date,
         "auto_adjust": False,
         "actions": False,
     }
@@ -149,15 +149,44 @@ def _fetch_price_series(ticker: str, start: datetime, end: datetime) -> pd.Serie
             "Instale-o com 'pip install yfinance' e rode novamente."
         )
 
+    today = datetime.utcnow().date()
+    start_date = start.date()
+    end_date = end.date()
+
+    if start_date > today:
+        raise ValueError(
+            "Data do evento no futuro: janela inicia em %s, data atual é %s"
+            % (start_date, today)
+        )
+
+    # Evita solicitar datas que ainda não ocorreram para reduzir falsos positivos
+    # de tickers inválidos. Mantemos um dia adicional na requisição para capturar
+    # o pregão seguinte.
+    effective_end_date = min(end_date, today)
+    request_end_date = effective_end_date + timedelta(days=1)
+
     attempted_symbols = []
     for symbol in _candidate_symbols(ticker):
         attempted_symbols.append(symbol)
-        LOGGER.debug("Baixando preços para %s (tentativa %s) de %s a %s", symbol, len(attempted_symbols), start.date(), end.date())
+        LOGGER.debug(
+            "Baixando preços para %s (tentativa %s) de %s a %s",
+            symbol,
+            len(attempted_symbols),
+            start_date,
+            effective_end_date,
+        )
 
-        data = _attempt_download(symbol, start, end)
+        data = _attempt_download(symbol, start_date, request_end_date)
         if data is None or data.empty:
             LOGGER.debug("Tentando fallback com yf.Ticker.history para %s", symbol)
-            data = _attempt_history(symbol, start, end)
+            data = _attempt_history(symbol, start_date, request_end_date)
+
+        if data is not None and not data.empty:
+            # Limita as datas ao intervalo efetivo utilizado para requisição.
+            data = data.loc[
+                (data.index.date >= start_date)
+                & (data.index.date <= effective_end_date)
+            ]
 
         if data is None or data.empty:
             continue
