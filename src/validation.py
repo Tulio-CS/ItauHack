@@ -88,6 +88,27 @@ _COUNTRY_SUFFIXES = {
 }
 
 
+def _should_extend_with_suffixes(symbol: str, country_code: str) -> bool:
+    """Return True if we should attempt country-based suffix permutations."""
+
+    if not country_code or country_code == "US":
+        return False
+
+    letters_only = symbol.isalpha()
+    if letters_only and len(symbol) <= 2:
+        # Evita montar variantes como ``F.MX`` ou ``T.SA`` para tickers curtos que
+        # normalmente já representam o ativo correto em bolsas globais.
+        return False
+
+    if country_code == "MX" and letters_only and len(symbol) <= 3:
+        # Notícias mexicanas costumam trazer tickers locais com sufixos próprios
+        # (ex.: ``BIMBOA``). Para curtos como ``F`` mantemos apenas o símbolo
+        # base, respeitando o pedido de não tentar ``F.MX``.
+        return False
+
+    return True
+
+
 def _candidate_symbols(ticker: str, country: Optional[str]) -> Sequence[str]:
     """Generate alternative symbols that yfinance may accept.
 
@@ -106,11 +127,14 @@ def _candidate_symbols(ticker: str, country: Optional[str]) -> Sequence[str]:
             yield symbol
 
     country_code = (country or "").strip().upper()
-    for suffix in _COUNTRY_SUFFIXES.get(country_code, tuple()):
-        candidate = f"{normalized}{suffix}" if not normalized.endswith(suffix) else normalized
-        if candidate not in seen:
-            seen.add(candidate)
-            yield candidate
+    if _should_extend_with_suffixes(normalized, country_code):
+        for suffix in _COUNTRY_SUFFIXES.get(country_code, tuple()):
+            candidate = (
+                f"{normalized}{suffix}" if not normalized.endswith(suffix) else normalized
+            )
+            if candidate not in seen:
+                seen.add(candidate)
+                yield candidate
 
 
 def _attempt_download(symbol: str, start_date: date, end_date: date):
@@ -176,6 +200,12 @@ def _fetch_price_series(
     attempted_symbols = []
     for symbol in _candidate_symbols(ticker, country):
         attempted_symbols.append(symbol)
+        LOGGER.info(
+            "Buscando preços para %s usando símbolo %s (tentativa %s)",
+            ticker,
+            symbol,
+            len(attempted_symbols),
+        )
         LOGGER.debug(
             "Baixando preços para %s (tentativa %s) de %s a %s",
             symbol,
