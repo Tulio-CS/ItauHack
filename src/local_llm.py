@@ -68,6 +68,26 @@ MARKET_MOVING_KEYWORDS = {
     "vote",
     "shareholder",
     "compensation",
+    "acordo",
+    "contrato",
+    "parceria",
+    "licença",
+    "licenca",
+    "joint venture",
+    "aliança",
+    "alianca",
+    "agreement",
+    "deal",
+    "partnership",
+    "exclusive",
+    "exclusivo",
+    "stake",
+    "participação",
+    "participacao",
+    "participation",
+    "investment",
+    "oferta",
+    "bid",
 }
 
 FLUFF_KEYWORDS = {
@@ -201,6 +221,27 @@ GOVERNANCE_KEYWORDS = {
     "say-on-pay",
 }
 
+PARTNERSHIP_KEYWORDS = {
+    "acordo",
+    "contrato",
+    "parceria",
+    "licença",
+    "licenca",
+    "licensing",
+    "exclusive",
+    "exclusivo",
+    "exclusive rights",
+    "joint venture",
+    "aliança",
+    "alianca",
+    "agreement",
+    "deal",
+    "partnership",
+    "strategic",
+    "cooperação",
+    "cooperacao",
+}
+
 
 logger = logging.getLogger(__name__)
 
@@ -211,6 +252,7 @@ EVENT_TYPE_LABELS = {
     "legal_or_regulatory": "Tema legal ou regulatório",
     "analyst_rating": "Avaliação ou rating de analista",
     "governance": "Deliberação de acionistas ou governança",
+    "strategic_partnership": "Parceria ou acordo estratégico",
 }
 
 EARNINGS_KEYWORDS = {
@@ -377,6 +419,8 @@ def detect_event_type(text: str) -> str:
         return "legal_or_regulatory"
     if contains_keyword(lower, GOVERNANCE_KEYWORDS):
         return "governance"
+    if contains_keyword(lower, PARTNERSHIP_KEYWORDS):
+        return "strategic_partnership"
     if contains_keyword(lower, HUMAN_RESOURCES_KEYWORDS):
         return "management_or_hr"
     return "general_business"
@@ -388,6 +432,8 @@ def detect_category(text: str, *, event_type: Optional[str] = None) -> str:
     lower = text.lower()
     if contains_keyword(lower, MARKET_MOVING_KEYWORDS):
         return "Market-Moving"
+    if contains_keyword(lower, PARTNERSHIP_KEYWORDS):
+        return "Market-Moving"
     if contains_keyword(lower, FLUFF_KEYWORDS):
         return "Fluff/Marketing"
 
@@ -398,6 +444,7 @@ def detect_category(text: str, *, event_type: Optional[str] = None) -> str:
         "legal_or_regulatory",
         "analyst_rating",
         "governance",
+        "strategic_partnership",
     }:
         return "Market-Moving"
 
