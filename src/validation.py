@@ -77,48 +77,105 @@ def _trading_window(date: datetime, days_forward: int) -> Tuple[datetime, dateti
     return start, end
 
 
+_ALT_SUFFIXES = (".US", ".SA", ".MX", ".NE", ".TO", ".L", ".SW", ".HK")
+
+
+def _candidate_symbols(ticker: str) -> Sequence[str]:
+    """Generate alternative symbols that yfinance may accept.
+
+    We first yield the original ticker and then append a few common suffixes that
+    map to alternative exchanges (ex.: ``.US`` for Stooq listings). This helps
+    when Yahoo Finance lacks timezone metadata for the canonical ticker
+    (``YFTzMissingError``), which otherwise results in empty downloads.
+    """
+
+    normalized = ticker.strip()
+    seen = set()
+    for symbol in (normalized, normalized.replace(".", "-"), normalized.replace("-", ".")):
+        if symbol and symbol not in seen:
+            seen.add(symbol)
+            yield symbol
+
+    # Fallback to alternate exchanges only if the canonical ticker is short and
+    # alphanumeric (e.g., ``F`` -> ``F.US``)
+    base = normalized.split(".")[0]
+    if base.isalpha() and 1 <= len(base) <= 5:
+        for suffix in _ALT_SUFFIXES:
+            candidate = f"{base}{suffix}"
+            if candidate not in seen:
+                seen.add(candidate)
+                yield candidate
+
+
+def _attempt_download(symbol: str, start: datetime, end: datetime):
+    try:
+        return yf.download(
+            symbol,
+            start=start.date(),
+            end=end.date() + timedelta(days=1),
+            progress=False,
+            threads=False,
+        )
+    except Exception as exc:  # pragma: no cover - network variability
+        LOGGER.debug("Download primário falhou para %s: %s", symbol, exc, exc_info=True)
+        return None
+
+
+def _attempt_history(symbol: str, start: datetime, end: datetime):
+    ticker_client = yf.Ticker(symbol)
+    history_kwargs = {
+        "start": start.date(),
+        "end": end.date() + timedelta(days=1),
+        "auto_adjust": False,
+        "actions": False,
+    }
+    try:
+        return ticker_client.history(**history_kwargs, raise_errors=False)
+    except TypeError:  # pragma: no cover - older yfinance versions
+        try:
+            return ticker_client.history(**history_kwargs)
+        except Exception as exc:  # pragma: no cover - network variability
+            LOGGER.debug("Fallback history falhou para %s: %s", symbol, exc, exc_info=True)
+            return None
+    except Exception as exc:  # pragma: no cover - network variability
+        LOGGER.debug("Fallback history falhou para %s: %s", symbol, exc, exc_info=True)
+        return None
+
+
 def _fetch_price_series(ticker: str, start: datetime, end: datetime) -> pd.Series:
     if yf is None:  # pragma: no cover - dependency guidance
         raise RuntimeError(
             "O pacote 'yfinance' é necessário para baixar preços. "
             "Instale-o com 'pip install yfinance' e rode novamente."
         )
-    LOGGER.debug("Baixando preços para %s de %s a %s", ticker, start.date(), end.date())
-    try:
-        data = yf.download(
-            ticker,
-            start=start.date(),
-            end=end.date() + timedelta(days=1),
-            progress=False,
-            threads=False,
-        )
-    except Exception as exc:
-        LOGGER.debug("Download primário do yfinance falhou para %s: %s", ticker, exc, exc_info=True)
-        data = None
 
-    if data is None or data.empty:
-        LOGGER.debug("Tentando fallback com yf.Ticker.history para %s", ticker)
-        ticker_client = yf.Ticker(ticker)
-        history_kwargs = {
-            "start": start.date(),
-            "end": end.date() + timedelta(days=1),
-            "auto_adjust": False,
-            "actions": False,
-        }
-        try:
-            # Disponível nas versões recentes do yfinance. Mantemos compatibilidade caso não exista.
-            data = ticker_client.history(**history_kwargs, raise_errors=False)
-        except TypeError:
-            data = ticker_client.history(**history_kwargs)
+    attempted_symbols = []
+    for symbol in _candidate_symbols(ticker):
+        attempted_symbols.append(symbol)
+        LOGGER.debug("Baixando preços para %s (tentativa %s) de %s a %s", symbol, len(attempted_symbols), start.date(), end.date())
 
-    if data is None or data.empty:
-        raise ValueError(f"Sem dados de preço retornados para {ticker}")
+        data = _attempt_download(symbol, start, end)
+        if data is None or data.empty:
+            LOGGER.debug("Tentando fallback com yf.Ticker.history para %s", symbol)
+            data = _attempt_history(symbol, start, end)
 
-    price_column = "Adj Close" if "Adj Close" in data.columns else "Close"
-    if price_column not in data.columns:
-        raise ValueError(f"Sem coluna de preço ('Adj Close' ou 'Close') para {ticker}")
+        if data is None or data.empty:
+            continue
 
-    return data[price_column].dropna()
+        price_column = "Adj Close" if "Adj Close" in data.columns else "Close"
+        if price_column not in data.columns:
+            LOGGER.debug("Sem coluna de preço em %s (colunas: %s)", symbol, list(data.columns))
+            continue
+
+        if symbol != ticker:
+            LOGGER.info("Uso do símbolo alternativo %s para baixar preços de %s", symbol, ticker)
+
+        return data[price_column].dropna()
+
+    raise ValueError(
+        "Sem dados de preço retornados para %s (tentativas: %s)"
+        % (ticker, ", ".join(attempted_symbols))
+    )
 
 
 def _price_on_or_after(series: pd.Series, reference: datetime) -> Optional[Tuple[pd.Timestamp, float]]:
