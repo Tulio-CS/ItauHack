@@ -4,8 +4,28 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
+
+
+def _bootstrap_path() -> None:
+    """Garante que o pacote ``src`` esteja disponível no ``sys.path``.
+
+    Quando o script é executado diretamente (``python scripts/run_local_llm.py``),
+    o diretório do repositório nem sempre é adicionado automaticamente ao
+    ``sys.path``. Isso é comum principalmente no Windows, causando o erro
+    ``ModuleNotFoundError: No module named 'src'``. Este helper insere o
+    diretório raiz do projeto no início da lista de caminhos de importação,
+    evitando que o usuário precise configurar ``PYTHONPATH`` manualmente.
+    """
+
+    repo_root = Path(__file__).resolve().parents[1]
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+
+
+_bootstrap_path()
 
 from src.data_loader import UnsupportedFormatError, load_records
 from src.local_llm import LocalLLM
