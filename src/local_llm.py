@@ -14,7 +14,9 @@ texto em uma representação JSON rica em informações.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import logging
 import re
+from functools import lru_cache
 from typing import Dict, Iterable, List, Optional
 
 
@@ -45,6 +47,27 @@ MARKET_MOVING_KEYWORDS = {
     "paralisacao",
     "fábrica",
     "fabrica",
+    "profit",
+    "revenue",
+    "earnings",
+    "forecast",
+    "guidance",
+    "layoff",
+    "job cut",
+    "lawsuit",
+    "investigation",
+    "product",
+    "launch",
+    "ipo",
+    "merger",
+    "acquisition",
+    "strike",
+    "factory",
+    "delay",
+    "supply",
+    "vote",
+    "shareholder",
+    "compensation",
 }
 
 FLUFF_KEYWORDS = {
@@ -59,6 +82,13 @@ FLUFF_KEYWORDS = {
     "prêmio",
     "premio",
     "responsabilidade social",
+    "donation",
+    "sponsorship",
+    "marketing",
+    "campaign",
+    "interview",
+    "award",
+    "csr",
 }
 
 PRODUCT_KEYWORDS = {
@@ -70,6 +100,13 @@ PRODUCT_KEYWORDS = {
     "modelo",
     "dispositivo",
     "aplicativo",
+    "software",
+    "launch",
+    "product",
+    "service",
+    "model",
+    "device",
+    "app",
     "software",
 }
 
@@ -84,6 +121,15 @@ LEGAL_KEYWORDS = {
     "acusação",
     "acusacao",
     "tribunal",
+    "lawsuit",
+    "investigation",
+    "class action",
+    "litigation",
+    "accusation",
+    "court",
+    "settlement",
+    "probe",
+    "regulator",
 }
 
 ANALYST_KEYWORDS = {
@@ -105,6 +151,15 @@ ANALYST_KEYWORDS = {
     "avaliacao",
     "cobertura",
     "coverage",
+    "recommendation",
+    "buy",
+    "sell",
+    "hold",
+    "overweight",
+    "underweight",
+    "initiates",
+    "maintains",
+    "neutral",
 }
 
 HUMAN_RESOURCES_KEYWORDS = {
@@ -119,7 +174,35 @@ HUMAN_RESOURCES_KEYWORDS = {
     "ceo",
     "cfo",
     "presidente",
+    "layoff",
+    "job cut",
+    "restructuring",
+    "hiring",
+    "executive",
+    "chief",
+    "chairman",
 }
+
+GOVERNANCE_KEYWORDS = {
+    "vote",
+    "voto",
+    "assembleia",
+    "shareholder",
+    "proxy",
+    "conselho",
+    "board",
+    "compensation",
+    "remuneração",
+    "remuneracao",
+    "pay package",
+    "governança",
+    "governanca",
+    "proposal",
+    "say-on-pay",
+}
+
+
+logger = logging.getLogger(__name__)
 
 EVENT_TYPE_LABELS = {
     "earnings_report": "Resultado financeiro / guidance",
@@ -127,6 +210,7 @@ EVENT_TYPE_LABELS = {
     "management_or_hr": "Mudanças em gestão ou estrutura de pessoal",
     "legal_or_regulatory": "Tema legal ou regulatório",
     "analyst_rating": "Avaliação ou rating de analista",
+    "governance": "Deliberação de acionistas ou governança",
 }
 
 EARNINGS_KEYWORDS = {
@@ -140,6 +224,11 @@ EARNINGS_KEYWORDS = {
     "guidance",
     "projeção",
     "projecao",
+    "revenue",
+    "profit",
+    "earnings",
+    "forecast",
+    "outlook",
 }
 
 NEGATIVE_SENTIMENT = {
@@ -165,6 +254,17 @@ NEGATIVE_SENTIMENT = {
     "against",
     "downgrade",
     "venda",
+    "decline",
+    "drop",
+    "fell",
+    "fall",
+    "miss",
+    "misses",
+    "cut",
+    "slump",
+    "delay",
+    "reject",
+    "against",
 }
 
 POSITIVE_SENTIMENT = {
@@ -188,26 +288,41 @@ POSITIVE_SENTIMENT = {
     "approve",
     "upgrade",
     "compra",
+    "rally",
+    "beat",
+    "surpass",
+    "gains",
+    "growth",
+    "improve",
+    "supports",
+    "for",
 }
 
 
 NUMERIC_PATTERN = re.compile(
-    r"(?P<sign>[-+])?\$?(?P<number>\d+[\d.,]*)\s*(?P<unit>milhões|bilhões|biliões|%|por cento|usd|us\$|dólares|dolares|reais|r\$)?",
+    r"(?P<sign>[-+])?\$?(?P<number>\d+[\d.,]*)\s*(?P<unit>milhões|bilhões|biliões|milhões|milhoes|billion|million|%|por cento|percent|usd|us\$|dólares|dolares|dollars|reais|r\$)?",
     re.IGNORECASE,
 )
 
 
 METRIC_LABELS = {
     "eps": "EPS",
+    "earnings per share": "EPS",
     "lucro por aç": "EPS",
     "lucro": "profit",
+    "profit": "profit",
     "receita": "revenue",
+    "revenue": "revenue",
+    "sales": "sales",
     "vendas": "sales",
     "margem": "margin",
+    "margin": "margin",
     "guidance": "guidance",
+    "outlook": "guidance",
     "preço-alvo": "price_target",
     "preco-alvo": "price_target",
     "price target": "price_target",
+    "target": "price_target",
 }
 
 
@@ -240,18 +355,30 @@ def detect_metric_name(context: str) -> Optional[str]:
     return None
 
 
+@lru_cache(maxsize=None)
+def _compile_keyword(keyword: str) -> re.Pattern[str]:
+    escaped = re.escape(keyword)
+    return re.compile(rf"\b{escaped}\b", re.IGNORECASE)
+
+
+def contains_keyword(text: str, keywords: Iterable[str]) -> bool:
+    return any(_compile_keyword(keyword).search(text) for keyword in keywords)
+
+
 def detect_event_type(text: str) -> str:
     lower = text.lower()
-    if any(word in lower for word in EARNINGS_KEYWORDS):
+    if contains_keyword(lower, EARNINGS_KEYWORDS):
         return "earnings_report"
-    if any(word in lower for word in PRODUCT_KEYWORDS):
+    if contains_keyword(lower, PRODUCT_KEYWORDS):
         return "product_update"
-    if any(word in lower for word in ANALYST_KEYWORDS):
+    if contains_keyword(lower, ANALYST_KEYWORDS):
         return "analyst_rating"
-    if any(word in lower for word in HUMAN_RESOURCES_KEYWORDS):
-        return "management_or_hr"
-    if any(word in lower for word in LEGAL_KEYWORDS):
+    if contains_keyword(lower, LEGAL_KEYWORDS):
         return "legal_or_regulatory"
+    if contains_keyword(lower, GOVERNANCE_KEYWORDS):
+        return "governance"
+    if contains_keyword(lower, HUMAN_RESOURCES_KEYWORDS):
+        return "management_or_hr"
     return "general_business"
 
 
@@ -259,9 +386,9 @@ def detect_category(text: str, *, event_type: Optional[str] = None) -> str:
     """Classifica o texto por relevância considerando o tipo de evento."""
 
     lower = text.lower()
-    if any(word in lower for word in MARKET_MOVING_KEYWORDS):
+    if contains_keyword(lower, MARKET_MOVING_KEYWORDS):
         return "Market-Moving"
-    if any(word in lower for word in FLUFF_KEYWORDS):
+    if contains_keyword(lower, FLUFF_KEYWORDS):
         return "Fluff/Marketing"
 
     if event_type in {
@@ -270,6 +397,7 @@ def detect_category(text: str, *, event_type: Optional[str] = None) -> str:
         "management_or_hr",
         "legal_or_regulatory",
         "analyst_rating",
+        "governance",
     }:
         return "Market-Moving"
 
@@ -278,8 +406,8 @@ def detect_category(text: str, *, event_type: Optional[str] = None) -> str:
 
 def detect_sentiment(text: str) -> str:
     lower = text.lower()
-    positive = any(word in lower for word in POSITIVE_SENTIMENT)
-    negative = any(word in lower for word in NEGATIVE_SENTIMENT)
+    positive = contains_keyword(lower, POSITIVE_SENTIMENT)
+    negative = contains_keyword(lower, NEGATIVE_SENTIMENT)
     if positive and negative:
         return "misto"
     if positive:
@@ -343,8 +471,20 @@ class LocalLLM:
         metricas = self._extract_metrics(text)
 
         lower = text.lower()
-        market_keyword_hit = any(word in lower for word in MARKET_MOVING_KEYWORDS)
-        fluff_keyword_hit = any(word in lower for word in FLUFF_KEYWORDS)
+        market_keyword_hit = contains_keyword(lower, MARKET_MOVING_KEYWORDS)
+        fluff_keyword_hit = contains_keyword(lower, FLUFF_KEYWORDS)
+
+        logger.debug(
+            "Resultado parcial da classificação: %s",
+            {
+                "categoria": categoria,
+                "tipo_evento": tipo_evento,
+                "sentimento": sentimento,
+                "metricas": len(metricas),
+                "market_keyword_hit": market_keyword_hit,
+                "fluff_keyword_hit": fluff_keyword_hit,
+            },
+        )
 
         justificativa_parts: List[str] = []
         if categoria == "Market-Moving":
@@ -363,6 +503,14 @@ class LocalLLM:
             else:
                 justificativa_parts.append("Classificado como marketing pelo contexto geral")
         else:
+            logger.debug(
+                "Fallback para categoria irrelevante: %s",
+                {
+                    "tipo_evento": tipo_evento,
+                    "market_keyword_hit": market_keyword_hit,
+                    "fluff_keyword_hit": fluff_keyword_hit,
+                },
+            )
             justificativa_parts.append("Ausência de gatilhos relevantes detectados")
 
         if metricas:

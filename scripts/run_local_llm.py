@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sys
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
@@ -56,6 +57,11 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
         default=None,
         help="Processa apenas os primeiros N registros (útil para testes).",
     )
+    parser.add_argument(
+        "--log-level",
+        default="INFO",
+        help="Define o nível de log (ex.: DEBUG, INFO, WARNING).",
+    )
     return parser.parse_args(argv)
 
 
@@ -65,6 +71,11 @@ def ensure_parent(path: Path) -> None:
 
 def main(argv: Iterable[str] | None = None) -> int:
     args = parse_args(argv)
+
+    logging.basicConfig(
+        level=getattr(logging, str(args.log_level).upper(), logging.INFO),
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
     try:
         records = load_records(args.files)
     except UnsupportedFormatError as exc:  # pragma: no cover - mensagens informativas
