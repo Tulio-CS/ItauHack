@@ -90,22 +90,21 @@ _TICKERS_TO_SKIP = {"F"}
 
 def _attempt_stooq(
     ticker: str,
+    symbol: str,
     start_date: date,
     end_date: date,
-    country_code: Optional[str],
 ):
     """Fetch prices from Stooq as the canonical market data source."""
 
     if pd is None:  # pragma: no cover - dependency guidance
         return None
 
-    suffix = _STOOQ_SUFFIXES.get((country_code or "US").upper())
-    symbol = ticker.lower()
-    if suffix and not symbol.endswith(suffix):
-        symbol = f"{symbol}{suffix}"
-
     url = f"https://stooq.com/q/d/l/?s={symbol}&i=d"
-    LOGGER.info("Buscando preços via Stooq para %s usando símbolo %s", ticker, symbol)
+    LOGGER.info(
+        "Buscando preços via Stooq para %s usando símbolo %s",
+        ticker,
+        symbol,
+    )
 
     try:  # pragma: no cover - network variability
         with urlopen(url, timeout=10) as response:
@@ -142,13 +141,33 @@ def _attempt_stooq(
     return series.sort_index()
 
 
-def _normalize_to_bdr(ticker: str) -> str:
+def _generate_stooq_symbols(ticker: str, country_code: Optional[str]) -> List[str]:
     cleaned = ticker.strip().upper()
     if not cleaned:
-        return cleaned
-    if not cleaned.endswith("34"):
-        cleaned = f"{cleaned}34"
-    return cleaned
+        return []
+
+    base_symbol = cleaned.lower()
+    candidates: List[str] = []
+
+    country = (country_code or "US").upper()
+    suffix = _STOOQ_SUFFIXES.get(country)
+    if suffix:
+        candidates.append(f"{base_symbol}{suffix}")
+
+    if country != "US":
+        us_suffix = _STOOQ_SUFFIXES.get("US")
+        if us_suffix:
+            candidates.append(f"{base_symbol}{us_suffix}")
+
+    candidates.append(base_symbol)
+
+    seen = set()
+    ordered_unique: List[str] = []
+    for candidate in candidates:
+        if candidate not in seen:
+            ordered_unique.append(candidate)
+            seen.add(candidate)
+    return ordered_unique
 
 
 def _fetch_price_series(
@@ -176,29 +195,30 @@ def _fetch_price_series(
         event_datetime.date().isoformat() if event_datetime is not None else "N/A"
     )
 
-    normalized_ticker = _normalize_to_bdr(ticker)
-    country_code = "BR"
+    country_code = str(country).upper() if country else None
 
-    LOGGER.info(
-        "Buscando preços para %s (normalizado %s) na data %s via Stooq",
-        ticker,
-        normalized_ticker,
-        event_date_str,
-    )
-
-    stooq_series = _attempt_stooq(
-        normalized_ticker,
-        start_date,
-        effective_end_date,
-        country_code,
-    )
-    if stooq_series is not None and not stooq_series.empty:
-        LOGGER.info("Dados obtidos via Stooq para %s", normalized_ticker)
-        return stooq_series
+    attempted_symbols: List[str] = []
+    for symbol in _generate_stooq_symbols(ticker, country_code):
+        LOGGER.info(
+            "Buscando preços para %s na data %s via Stooq (símbolo %s)",
+            ticker,
+            event_date_str,
+            symbol,
+        )
+        stooq_series = _attempt_stooq(
+            ticker,
+            symbol,
+            start_date,
+            effective_end_date,
+        )
+        attempted_symbols.append(symbol)
+        if stooq_series is not None and not stooq_series.empty:
+            LOGGER.info("Dados obtidos via Stooq para %s (símbolo %s)", ticker, symbol)
+            return stooq_series
 
     raise ValueError(
-        "Sem dados de preço retornados via Stooq para %s normalizado como %s"
-        % (ticker, normalized_ticker)
+        "Sem dados de preço retornados via Stooq para %s (tentativas: %s)"
+        % (ticker, ", ".join(attempted_symbols) if attempted_symbols else "nenhuma")
     )
 
 
