@@ -19,12 +19,6 @@ try:
 except ImportError:  # pragma: no cover - dependency guidance
     pd = None  # type: ignore
 
-try:
-    import yfinance as yf
-except ImportError:  # pragma: no cover - dependency guidance
-    yf = None
-
-
 LOGGER = logging.getLogger(__name__)
 
 
@@ -80,17 +74,6 @@ def _trading_window(date: datetime, days_forward: int) -> Tuple[datetime, dateti
     return start, end
 
 
-_COUNTRY_SUFFIXES = {
-    "BR": (".SA",),
-    "CA": (".TO",),
-    "MX": (".MX",),
-    "GB": (".L",),
-    "CH": (".SW",),
-    "HK": (".HK",),
-    "US": tuple(),
-}
-
-
 _STOOQ_SUFFIXES = {
     "US": ".us",
     "BR": ".sa",
@@ -102,97 +85,13 @@ _STOOQ_SUFFIXES = {
 }
 
 
-def _should_extend_with_suffixes(symbol: str, country_code: str) -> bool:
-    """Return True if we should attempt country-based suffix permutations."""
-
-    if not country_code or country_code == "US":
-        return False
-
-    letters_only = symbol.isalpha()
-    if letters_only and len(symbol) <= 2:
-        # Evita montar variantes como ``F.MX`` ou ``T.SA`` para tickers curtos que
-        # normalmente já representam o ativo correto em bolsas globais.
-        return False
-
-    if country_code == "MX" and letters_only and len(symbol) <= 3:
-        # Notícias mexicanas costumam trazer tickers locais com sufixos próprios
-        # (ex.: ``BIMBOA``). Para curtos como ``F`` mantemos apenas o símbolo
-        # base, respeitando o pedido de não tentar ``F.MX``.
-        return False
-
-    return True
-
-
-def _candidate_symbols(ticker: str, country: Optional[str]) -> Sequence[str]:
-    """Generate alternative symbols that yfinance may accept.
-
-    The canonical ticker is always yielded first. We then add variations that
-    swap ``.`` and ``-`` to handle symbols like ``BRK.B``. Exchange suffixes are
-    appended only when a country hint is provided (e.g., ``BR`` -> ``.SA``),
-    avoiding guesses such as ``F.MX`` when the ticker already corresponds to a
-    U.S.-listed security.
-    """
-
-    normalized = ticker.strip()
-    seen = set()
-    for symbol in (normalized, normalized.replace(".", "-"), normalized.replace("-", ".")):
-        if symbol and symbol not in seen:
-            seen.add(symbol)
-            yield symbol
-
-    country_code = (country or "").strip().upper()
-    if _should_extend_with_suffixes(normalized, country_code):
-        for suffix in _COUNTRY_SUFFIXES.get(country_code, tuple()):
-            candidate = (
-                f"{normalized}{suffix}" if not normalized.endswith(suffix) else normalized
-            )
-            if candidate not in seen:
-                seen.add(candidate)
-                yield candidate
-
-
-def _attempt_download(symbol: str, start_date: date, end_date: date):
-    try:
-        return yf.download(
-            symbol,
-            start=start_date,
-            end=end_date,
-            progress=False,
-            threads=False,
-        )
-    except Exception as exc:  # pragma: no cover - network variability
-        LOGGER.debug("Download primário falhou para %s: %s", symbol, exc, exc_info=True)
-        return None
-
-
-def _attempt_history(symbol: str, start_date: date, end_date: date):
-    ticker_client = yf.Ticker(symbol)
-    history_kwargs = {
-        "start": start_date,
-        "end": end_date,
-        "auto_adjust": False,
-        "actions": False,
-    }
-    try:
-        return ticker_client.history(**history_kwargs, raise_errors=False)
-    except TypeError:  # pragma: no cover - older yfinance versions
-        try:
-            return ticker_client.history(**history_kwargs)
-        except Exception as exc:  # pragma: no cover - network variability
-            LOGGER.debug("Fallback history falhou para %s: %s", symbol, exc, exc_info=True)
-            return None
-    except Exception as exc:  # pragma: no cover - network variability
-        LOGGER.debug("Fallback history falhou para %s: %s", symbol, exc, exc_info=True)
-        return None
-
-
 def _attempt_stooq(
     ticker: str,
     start_date: date,
     end_date: date,
     country_code: Optional[str],
 ):
-    """Fetch prices from Stooq as a final fallback when yfinance fails."""
+    """Fetch prices from Stooq as the canonical market data source."""
 
     if pd is None:  # pragma: no cover - dependency guidance
         return None
@@ -203,7 +102,7 @@ def _attempt_stooq(
         symbol = f"{symbol}{suffix}"
 
     url = f"https://stooq.com/q/d/l/?s={symbol}&i=d"
-    LOGGER.info("Tentando fallback Stooq para %s (%s)", ticker, url)
+    LOGGER.info("Buscando preços via Stooq para %s usando símbolo %s", ticker, symbol)
 
     try:  # pragma: no cover - network variability
         with urlopen(url, timeout=10) as response:
@@ -240,6 +139,15 @@ def _attempt_stooq(
     return series.sort_index()
 
 
+def _normalize_to_bdr(ticker: str) -> str:
+    cleaned = ticker.strip().upper()
+    if not cleaned:
+        return cleaned
+    if not cleaned.endswith("34"):
+        cleaned = f"{cleaned}34"
+    return cleaned
+
+
 def _fetch_price_series(
     ticker: str,
     start: datetime,
@@ -247,12 +155,6 @@ def _fetch_price_series(
     country: Optional[str],
     event_datetime: Optional[datetime] = None,
 ) -> pd.Series:
-    if yf is None:  # pragma: no cover - dependency guidance
-        raise RuntimeError(
-            "O pacote 'yfinance' é necessário para baixar preços. "
-            "Instale-o com 'pip install yfinance' e rode novamente."
-        )
-
     today = datetime.utcnow().date()
     start_date = start.date()
     end_date = end.date()
@@ -264,70 +166,36 @@ def _fetch_price_series(
         )
 
     # Evita solicitar datas que ainda não ocorreram para reduzir falsos positivos
-    # de tickers inválidos. Mantemos um dia adicional na requisição para capturar
-    # o pregão seguinte.
+    # de tickers inválidos.
     effective_end_date = min(end_date, today)
-    request_end_date = effective_end_date + timedelta(days=1)
 
-    attempted_symbols = []
     event_date_str = (
         event_datetime.date().isoformat() if event_datetime is not None else "N/A"
     )
 
-    country_code = (country or "").strip().upper()
+    normalized_ticker = _normalize_to_bdr(ticker)
+    country_code = "BR"
 
-    for symbol in _candidate_symbols(ticker, country):
-        attempted_symbols.append(symbol)
-        LOGGER.info(
-            "Buscando preços para %s na data %s usando símbolo %s (tentativa %s)",
-            ticker,
-            event_date_str,
-            symbol,
-            len(attempted_symbols),
-        )
-        LOGGER.debug(
-            "Baixando preços para %s (tentativa %s) de %s a %s",
-            symbol,
-            len(attempted_symbols),
-            start_date,
-            effective_end_date,
-        )
+    LOGGER.info(
+        "Buscando preços para %s (normalizado %s) na data %s via Stooq",
+        ticker,
+        normalized_ticker,
+        event_date_str,
+    )
 
-        data = _attempt_download(symbol, start_date, request_end_date)
-        if data is None or data.empty:
-            LOGGER.debug("Tentando fallback com yf.Ticker.history para %s", symbol)
-            data = _attempt_history(symbol, start_date, request_end_date)
-
-        if data is not None and not data.empty:
-            # Limita as datas ao intervalo efetivo utilizado para requisição.
-            data = data.loc[
-                (data.index.date >= start_date)
-                & (data.index.date <= effective_end_date)
-            ]
-
-        if data is None or data.empty:
-            continue
-
-        price_column = "Adj Close" if "Adj Close" in data.columns else "Close"
-        if price_column not in data.columns:
-            LOGGER.debug("Sem coluna de preço em %s (colunas: %s)", symbol, list(data.columns))
-            continue
-
-        if symbol != ticker:
-            LOGGER.info("Uso do símbolo alternativo %s para baixar preços de %s", symbol, ticker)
-
-        return data[price_column].dropna()
-
-    stooq_label = f"stooq:{ticker}"
-    attempted_symbols.append(stooq_label)
-    stooq_series = _attempt_stooq(ticker, start_date, effective_end_date, country_code)
+    stooq_series = _attempt_stooq(
+        normalized_ticker,
+        start_date,
+        effective_end_date,
+        country_code,
+    )
     if stooq_series is not None and not stooq_series.empty:
-        LOGGER.info("Dados obtidos via Stooq para %s", ticker)
+        LOGGER.info("Dados obtidos via Stooq para %s", normalized_ticker)
         return stooq_series
 
     raise ValueError(
-        "Sem dados de preço retornados para %s (tentativas: %s)"
-        % (ticker, ", ".join(attempted_symbols))
+        "Sem dados de preço retornados via Stooq para %s normalizado como %s"
+        % (ticker, normalized_ticker)
     )
 
 
@@ -392,14 +260,6 @@ def evaluate_predictions(
                 continue
 
             event_dt = _parse_datetime(raw["datetime"])
-
-            if ticker == "F":
-                LOGGER.info(
-                    "Ignorando ticker %s na data %s conforme solicitado; preços não serão buscados.",
-                    ticker,
-                    event_dt.date(),
-                )
-                continue
 
             if event_dt.date() > today:
                 LOGGER.debug(
