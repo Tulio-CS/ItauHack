@@ -85,6 +85,9 @@ _STOOQ_SUFFIXES = {
 }
 
 
+_TICKERS_TO_SKIP = {"F"}
+
+
 def _attempt_stooq(
     ticker: str,
     start_date: date,
@@ -267,6 +270,14 @@ def evaluate_predictions(
                     raw.get("id"),
                     event_dt.date(),
                     today,
+                )
+                continue
+
+            if ticker in _TICKERS_TO_SKIP:
+                LOGGER.info(
+                    "Ignorando ticker %s na data %s conforme configuração de skip.",
+                    ticker,
+                    event_dt.date(),
                 )
                 continue
             window_start, window_end = _trading_window(event_dt, max(horizons))
