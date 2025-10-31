@@ -173,7 +173,11 @@ def _attempt_history(symbol: str, start_date: date, end_date: date):
 
 
 def _fetch_price_series(
-    ticker: str, start: datetime, end: datetime, country: Optional[str]
+    ticker: str,
+    start: datetime,
+    end: datetime,
+    country: Optional[str],
+    event_datetime: Optional[datetime] = None,
 ) -> pd.Series:
     if yf is None:  # pragma: no cover - dependency guidance
         raise RuntimeError(
@@ -198,11 +202,16 @@ def _fetch_price_series(
     request_end_date = effective_end_date + timedelta(days=1)
 
     attempted_symbols = []
+    event_date_str = (
+        event_datetime.date().isoformat() if event_datetime is not None else "N/A"
+    )
+
     for symbol in _candidate_symbols(ticker, country):
         attempted_symbols.append(symbol)
         LOGGER.info(
-            "Buscando preços para %s usando símbolo %s (tentativa %s)",
+            "Buscando preços para %s na data %s usando símbolo %s (tentativa %s)",
             ticker,
+            event_date_str,
             symbol,
             len(attempted_symbols),
         )
@@ -306,6 +315,15 @@ def evaluate_predictions(
                 continue
 
             event_dt = _parse_datetime(raw["datetime"])
+
+            if ticker == "F":
+                LOGGER.info(
+                    "Ignorando ticker %s na data %s conforme solicitado; preços não serão buscados.",
+                    ticker,
+                    event_dt.date(),
+                )
+                continue
+
             if event_dt.date() > today:
                 LOGGER.debug(
                     "Evento %s (%s) ocorre no futuro em relação à data atual %s; ignorando",
@@ -318,7 +336,11 @@ def evaluate_predictions(
 
             try:
                 price_series = _fetch_price_series(
-                    ticker, window_start, window_end, raw.get("country")
+                    ticker,
+                    window_start,
+                    window_end,
+                    raw.get("country"),
+                    event_dt,
                 )
             except Exception as exc:  # pragma: no cover - network variability
                 LOGGER.warning("Falha ao obter preços para %s (%s): %s", ticker, raw.get("id"), exc)
