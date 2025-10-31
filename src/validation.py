@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import io
 import json
 import logging
 import math
@@ -10,6 +11,8 @@ from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
+from urllib.error import HTTPError, URLError
+from urllib.request import urlopen
 
 try:
     import pandas as pd
@@ -85,6 +88,17 @@ _COUNTRY_SUFFIXES = {
     "CH": (".SW",),
     "HK": (".HK",),
     "US": tuple(),
+}
+
+
+_STOOQ_SUFFIXES = {
+    "US": ".us",
+    "BR": ".sa",
+    "CA": ".ca",
+    "MX": ".mx",
+    "GB": ".uk",
+    "CH": ".ch",
+    "HK": ".hk",
 }
 
 
@@ -172,6 +186,60 @@ def _attempt_history(symbol: str, start_date: date, end_date: date):
         return None
 
 
+def _attempt_stooq(
+    ticker: str,
+    start_date: date,
+    end_date: date,
+    country_code: Optional[str],
+):
+    """Fetch prices from Stooq as a final fallback when yfinance fails."""
+
+    if pd is None:  # pragma: no cover - dependency guidance
+        return None
+
+    suffix = _STOOQ_SUFFIXES.get((country_code or "US").upper())
+    symbol = ticker.lower()
+    if suffix and not symbol.endswith(suffix):
+        symbol = f"{symbol}{suffix}"
+
+    url = f"https://stooq.com/q/d/l/?s={symbol}&i=d"
+    LOGGER.info("Tentando fallback Stooq para %s (%s)", ticker, url)
+
+    try:  # pragma: no cover - network variability
+        with urlopen(url, timeout=10) as response:
+            if response.status != 200:
+                LOGGER.debug("Resposta %s da Stooq para %s", response.status, ticker)
+                return None
+            payload = response.read().decode("utf-8", errors="ignore")
+    except (HTTPError, URLError, TimeoutError) as exc:  # pragma: no cover
+        LOGGER.debug("Falha ao acessar Stooq para %s: %s", ticker, exc, exc_info=True)
+        return None
+
+    if not payload:
+        return None
+
+    try:
+        df = pd.read_csv(io.StringIO(payload))
+    except Exception as exc:  # pragma: no cover - CSV parsing variability
+        LOGGER.debug("Falha ao ler CSV da Stooq para %s: %s", ticker, exc, exc_info=True)
+        return None
+
+    if df.empty or "Date" not in df.columns or "Close" not in df.columns:
+        return None
+
+    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+    df = df.dropna(subset=["Date"])
+    if df.empty:
+        return None
+
+    df = df[(df["Date"].dt.date >= start_date) & (df["Date"].dt.date <= end_date)]
+    if df.empty:
+        return None
+
+    series = df.set_index("Date")["Close"].astype(float)
+    return series.sort_index()
+
+
 def _fetch_price_series(
     ticker: str,
     start: datetime,
@@ -205,6 +273,8 @@ def _fetch_price_series(
     event_date_str = (
         event_datetime.date().isoformat() if event_datetime is not None else "N/A"
     )
+
+    country_code = (country or "").strip().upper()
 
     for symbol in _candidate_symbols(ticker, country):
         attempted_symbols.append(symbol)
@@ -247,6 +317,13 @@ def _fetch_price_series(
             LOGGER.info("Uso do símbolo alternativo %s para baixar preços de %s", symbol, ticker)
 
         return data[price_column].dropna()
+
+    stooq_label = f"stooq:{ticker}"
+    attempted_symbols.append(stooq_label)
+    stooq_series = _attempt_stooq(ticker, start_date, effective_end_date, country_code)
+    if stooq_series is not None and not stooq_series.empty:
+        LOGGER.info("Dados obtidos via Stooq para %s", ticker)
+        return stooq_series
 
     raise ValueError(
         "Sem dados de preço retornados para %s (tentativas: %s)"
