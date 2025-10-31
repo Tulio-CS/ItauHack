@@ -254,6 +254,8 @@ def evaluate_predictions(
             continue
         grouped_by_ticker[ticker].append(record)
 
+    today = datetime.utcnow().date()
+
     for ticker, ticker_records in grouped_by_ticker.items():
         ticker_records.sort(key=lambda r: _parse_datetime(r["raw"]["datetime"]))
         for record in ticker_records:
@@ -266,6 +268,14 @@ def evaluate_predictions(
                 continue
 
             event_dt = _parse_datetime(raw["datetime"])
+            if event_dt.date() > today:
+                LOGGER.debug(
+                    "Evento %s (%s) ocorre no futuro em relação à data atual %s; ignorando",
+                    raw.get("id"),
+                    event_dt.date(),
+                    today,
+                )
+                continue
             window_start, window_end = _trading_window(event_dt, max(horizons))
 
             try:
