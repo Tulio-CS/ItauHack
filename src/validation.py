@@ -84,10 +84,41 @@ def _fetch_price_series(ticker: str, start: datetime, end: datetime) -> pd.Serie
             "Instale-o com 'pip install yfinance' e rode novamente."
         )
     LOGGER.debug("Baixando preços para %s de %s a %s", ticker, start.date(), end.date())
-    data = yf.download(ticker, start=start.date(), end=end.date() + timedelta(days=1), progress=False)
-    if data.empty:
+    try:
+        data = yf.download(
+            ticker,
+            start=start.date(),
+            end=end.date() + timedelta(days=1),
+            progress=False,
+            threads=False,
+        )
+    except Exception as exc:
+        LOGGER.debug("Download primário do yfinance falhou para %s: %s", ticker, exc, exc_info=True)
+        data = None
+
+    if data is None or data.empty:
+        LOGGER.debug("Tentando fallback com yf.Ticker.history para %s", ticker)
+        ticker_client = yf.Ticker(ticker)
+        history_kwargs = {
+            "start": start.date(),
+            "end": end.date() + timedelta(days=1),
+            "auto_adjust": False,
+            "actions": False,
+        }
+        try:
+            # Disponível nas versões recentes do yfinance. Mantemos compatibilidade caso não exista.
+            data = ticker_client.history(**history_kwargs, raise_errors=False)
+        except TypeError:
+            data = ticker_client.history(**history_kwargs)
+
+    if data is None or data.empty:
         raise ValueError(f"Sem dados de preço retornados para {ticker}")
-    return data["Adj Close"].dropna()
+
+    price_column = "Adj Close" if "Adj Close" in data.columns else "Close"
+    if price_column not in data.columns:
+        raise ValueError(f"Sem coluna de preço ('Adj Close' ou 'Close') para {ticker}")
+
+    return data[price_column].dropna()
 
 
 def _price_on_or_after(series: pd.Series, reference: datetime) -> Optional[Tuple[pd.Timestamp, float]]:
