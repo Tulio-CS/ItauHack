@@ -1,0 +1,2 @@
+ticker,date,total_news,positive,negative,neutral,mean_score,aggregate_label
+AAPL,2025-10-15,15,2,1,12,0.0222,misto

@@ -1,0 +1,7 @@
+Janus Trading Agent Log
+Config: AgentConfig(sentiment_threshold=0.15, base_risk=1.5, max_risk=4.0)
+Trades executados: 1
+Resumo -> Total PnL: 0.0000, Sharpe aproximado: 0.0000, Média diária: 0.0000
+
+Últimos movimentos:
+2025-10-15 AAPL | score=0.0222 | action=flat | pnl=0.0000 | equity=0.0000

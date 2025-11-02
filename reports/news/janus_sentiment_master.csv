@@ -1,0 +1,2 @@
+ticker,date,total_news,mean_score,aggregate_label,pnl_base,trades_base,sharpe_base,median_ratio_diag
+AAPL,2025-10-15,15,0.0222,misto,86.785321,250,3.540638,0.049251
