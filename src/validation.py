@@ -385,6 +385,28 @@ class LocalPriceStore:
 
         return False
 
+    def coverage_bounds(self, canonical: str) -> Optional[Tuple[date, date]]:
+        canonical = canonical.upper()
+        min_dates: List[date] = []
+        max_dates: List[date] = []
+
+        series = self._bdr_data.get(canonical)
+        if series is not None and not series.empty:
+            min_dates.append(series.index.min().date())
+            max_dates.append(series.index.max().date())
+
+        adr = PAIRS_BDR_TO_ADR.get(canonical)
+        if adr:
+            adr_series = self._adr_data.get(adr.upper())
+            if adr_series is not None and not adr_series.empty:
+                min_dates.append(adr_series.index.min().date())
+                max_dates.append(adr_series.index.max().date())
+
+        if not min_dates or not max_dates:
+            return None
+
+        return min(min_dates), max(max_dates)
+
     @staticmethod
     def _slice_series(
         series: "pd.Series", start_date: date, end_date: date
@@ -398,6 +420,34 @@ class LocalPriceStore:
         attempted: List[str] = []
         attempt_details: List[str] = []
         canonical = canonical_bdr.upper()
+
+        coverage = self.coverage_bounds(canonical)
+        if coverage is not None:
+            cov_start, cov_end = coverage
+            # Ajusta a janela solicitada para permanecer dentro da cobertura disponível
+            attempted_symbols: List[str] = []
+            if canonical in self._bdr_data:
+                attempted_symbols.append(f"BDR:{canonical}")
+            adr_label = PAIRS_BDR_TO_ADR.get(canonical)
+            if adr_label:
+                attempted_symbols.append(f"ADR:{adr_label}")
+
+            if end_date < cov_start or start_date > cov_end:
+                detail_desc = (
+                    "Intervalo solicitado %s a %s fora da cobertura disponível %s a %s"
+                    % (start_date, end_date, cov_start, cov_end)
+                )
+                attempted_desc = ", ".join(attempted_symbols) or "nenhuma tentativa"
+                raise PriceFetchError(
+                    canonical_bdr,
+                    attempted_symbols,
+                    "Sem dados de preço disponíveis nas planilhas para %s (tentativas: %s)"
+                    % (canonical_bdr, attempted_desc),
+                    details=detail_desc,
+                )
+
+            start_date = max(start_date, cov_start)
+            end_date = min(end_date, cov_end)
 
         if canonical in self._bdr_data:
             attempted.append(f"BDR:{canonical}")
@@ -663,6 +713,36 @@ def evaluate_predictions(
                     }
                 )
                 continue
+
+            coverage = price_store.coverage_bounds(canonical_ticker)
+            if coverage is not None:
+                cov_start, cov_end = coverage
+                if event_dt.date() < cov_start or event_dt.date() > cov_end:
+                    LOGGER.info(
+                        "Evento %s (%s) fora da cobertura disponível para %s: %s a %s",
+                        raw.get("id"),
+                        ticker,
+                        canonical_ticker,
+                        cov_start,
+                        cov_end,
+                    )
+                    availability_rows.append(
+                        {
+                            "id": raw.get("id"),
+                            "ticker": ticker,
+                            "resolved_ticker": canonical_ticker,
+                            "country": raw.get("country"),
+                            "event_datetime": event_dt,
+                            "status": "event_outside_coverage",
+                            "attempted": False,
+                            "price_found": False,
+                            "message": (
+                                "Evento fora da cobertura das planilhas (%s a %s)."
+                                % (cov_start, cov_end)
+                            ),
+                        }
+                    )
+                    continue
             window_start, window_end = _trading_window(event_dt, max(horizons))
 
             try:
