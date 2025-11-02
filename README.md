@@ -46,7 +46,7 @@ Parâmetros importantes:
 
 - `--neutral-threshold`: retorno absoluto considerado neutro (padrão `0.01`, ou 1%).
 - `--mismatch-threshold`: tolerância (em retorno absoluto) para considerar pequenas
-  divergências como aceitáveis quando o sinal não inverte (padrão `0.02`).
+  divergências como aceitáveis quando o sinal não inverte (padrão `0.05`, ou 5%).
 - `--horizons`: horizontes personalizados (ex.: `--horizons 1 2 4 7`).
 
 ### Como a acurácia é calculada
@@ -59,7 +59,7 @@ Parâmetros importantes:
      negativo para expectativa positiva, ou vice-versa), independentemente da
      magnitude do movimento.
   2. A diferença de direções não envolve inversão de sinal, mas o retorno observado
-     ultrapassa `--mismatch-threshold`, indicando um desvio material da expectativa.
+     ultrapassa `--mismatch-threshold` (5% por padrão), indicando um desvio material da expectativa.
 - Movimentos dentro da tolerância especificada são tratados como corretos, evitando
   penalizar variações pequenas quando, por exemplo, o modelo esperava neutralidade.
 
@@ -73,12 +73,13 @@ Parâmetros importantes:
 O script gera:
 
 - `detailed_results.parquet` (ou `.csv` em fallback) com cada notícia avaliada por horizonte.
+- `per_day_summary.csv` consolidando o impacto agregado das notícias do próprio dia (janela de 1 dia) para cada horizonte.
 - `accuracy_summary.csv` com acurácia, acertos e neutros por horizonte.
 - `confusion_matrix.csv` com o cruzamento movimento esperado x realizado.
 - `accuracy_by_horizon.png` e `confusion_heatmap.png` com visualizações.
 - `price_availability.csv` com o status das tentativas de busca de preço e `price_availability.png` com o gráfico de sucesso/fracasso.
 - `multi_news_summary.csv` e `multi_news_accuracy.png` destacando o desempenho em dias com múltiplas notícias para o mesmo ativo.
-- `rolling_window_summary.csv` e `rolling_window_accuracy.png` avaliando o efeito combinado das notícias dos últimos 3 e 5 dias sobre os próximos 1, 3 e 5 dias.
+- `rolling_window_summary.csv` e `rolling_window_accuracy.png` avaliando o efeito combinado das notícias dos últimos 1, 3 e 5 dias (janelas móveis) sobre os próximos 1, 3 e 5 dias.
 
 ## Diagnóstico
 

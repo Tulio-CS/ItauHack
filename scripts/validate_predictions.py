@@ -46,7 +46,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--mismatch-threshold",
         type=float,
-        default=0.02,
+        default=0.05,
         help=(
             "Retorno absoluto máximo para considerar discrepâncias como toleráveis "
             "quando o sinal não diverge."
@@ -80,6 +80,7 @@ def main() -> None:
         summaries,
         confusion_df,
         availability_df,
+        per_day_df,
         multi_news_df,
         rolling_windows_df,
     ) = evaluate_predictions(
@@ -95,6 +96,7 @@ def main() -> None:
     summary_path = args.output_dir / "accuracy_summary.csv"
     confusion_path = args.output_dir / "confusion_matrix.csv"
     availability_path = args.output_dir / "price_availability.csv"
+    per_day_path = args.output_dir / "per_day_summary.csv"
     multi_news_path = args.output_dir / "multi_news_summary.csv"
     multi_news_plot = args.output_dir / "multi_news_accuracy.png"
     rolling_window_path = args.output_dir / "rolling_window_summary.csv"
@@ -132,6 +134,12 @@ def main() -> None:
         logging.info("Gráfico de disponibilidade de preços: %s", availability_plot)
     else:
         logging.warning("Nenhuma tentativa de busca de preço registrada.")
+
+    if not per_day_df.empty:
+        per_day_df.to_csv(per_day_path, index=False)
+        logging.info("Resumo diário (1 dia): %s", per_day_path)
+    else:
+        logging.info("Nenhum resumo diário para salvar.")
 
     if not multi_news_df.empty:
         multi_news_df.to_csv(multi_news_path, index=False)

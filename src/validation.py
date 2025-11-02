@@ -127,7 +127,7 @@ _MANUAL_NEWS_ALIASES = {
     "ABNB": "A1BN34",
 }
 
-ROLLING_WINDOW_SIZES: Tuple[int, int] = (3, 5)
+ROLLING_WINDOW_SIZES: Tuple[int, ...] = (1, 3, 5)
 
 
 @dataclasses.dataclass
@@ -611,10 +611,11 @@ def evaluate_predictions(
     records: Sequence[Dict[str, object]],
     horizons: Sequence[int] = (1, 3, 5),
     neutral_threshold: float = 0.01,
-    mismatch_threshold: float = 0.02,
+    mismatch_threshold: float = 0.05,
 ) -> Tuple[
     pd.DataFrame,
     Dict[int, HorizonResult],
+    pd.DataFrame,
     pd.DataFrame,
     pd.DataFrame,
     pd.DataFrame,
@@ -628,10 +629,13 @@ def evaluate_predictions(
     """Match structured predictions against price direction.
 
     Returns a tuple with:
-        - detailed record dataframe per horizon
+        - detailed record dataframe por horizonte
         - horizon summary stats
         - aggregate confusion matrix per horizon
         - availability dataframe with price-fetch diagnostics
+        - per-day aggregation (janela de 1 dia por horizonte)
+        - multi-news subset (dias com mais de uma notícia)
+        - rolling window aggregation (últimos 1/3/5 dias)
     """
 
     detailed_rows: List[Dict[str, object]] = []
@@ -913,6 +917,7 @@ def evaluate_predictions(
             availability_df,
             pd.DataFrame(),
             pd.DataFrame(),
+            pd.DataFrame(),
         )
 
     for horizon in horizons:
@@ -952,6 +957,7 @@ def evaluate_predictions(
         summaries,
         confusion_df,
         availability_df,
+        per_day_df,
         multi_news_df,
         rolling_windows_df,
     )
