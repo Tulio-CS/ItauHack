@@ -1,0 +1,5 @@
+# Output gerado pelo pipeline Janus
+reports/news/
+# Cópias de datasets estruturados
+data/output/*.jsonl
+__pycache__/
