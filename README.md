@@ -8,13 +8,12 @@ Este repositório contém utilitários para transformar notícias de mercado em 
 - Dependências opcionais:
   - [`pyarrow`](https://pypi.org/project/pyarrow/) ou [`pandas`](https://pypi.org/project/pandas/) para leitura de arquivos Parquet.
   - [`pandas`](https://pypi.org/project/pandas/) para validação e geração de tabelas.
-  - [`yfinance`](https://pypi.org/project/yfinance/) para download de preços históricos.
-  - [`matplotlib`](https://pypi.org/project/matplotlib/) e [`seaborn`](https://pypi.org/project/seaborn/) para gráficos de validação.
+- [`matplotlib`](https://pypi.org/project/matplotlib/) e [`seaborn`](https://pypi.org/project/seaborn/) para gráficos de validação.
 
 Instale todas as dependências com:
 
 ```bash
-pip install pandas pyarrow yfinance matplotlib seaborn
+pip install pandas pyarrow matplotlib seaborn
 ```
 
 ## 1. Gerar eventos estruturados com o LLM local
@@ -53,9 +52,10 @@ O script gera:
 - `accuracy_summary.csv` com acurácia, acertos e neutros por horizonte.
 - `confusion_matrix.csv` com o cruzamento movimento esperado x realizado.
 - `accuracy_by_horizon.png` e `confusion_heatmap.png` com visualizações.
+- `price_availability.csv` com o status das tentativas de busca de preço e `price_availability.png` com o gráfico de sucesso/fracasso.
 
 ## Diagnóstico
 
 Use `--log-level DEBUG` em qualquer script para rastrear as decisões da heurística ou mensagens detalhadas de download de preços.
 
-Em ambientes sem acesso à internet, a validação emitirá avisos ao tentar baixar preços via `yfinance`. Rode novamente quando houver conectividade.
+Em ambientes sem acesso à internet, a validação emitirá avisos ao tentar baixar preços no Stooq. Rode novamente quando houver conectividade.

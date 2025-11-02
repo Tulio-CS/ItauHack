@@ -37,6 +37,15 @@ class HorizonResult:
         return self.correct / self.total
 
 
+class PriceFetchError(RuntimeError):
+    """Raised when price data could not be recovered for a ticker."""
+
+    def __init__(self, ticker: str, attempted_symbols: Sequence[str], message: str) -> None:
+        super().__init__(message)
+        self.ticker = ticker
+        self.attempted_symbols = list(attempted_symbols)
+
+
 SENTIMENT_TO_EXPECTED_MOVE = {
     "positivo": 1,
     "positive": 1,
@@ -176,7 +185,7 @@ def _fetch_price_series(
     end: datetime,
     country: Optional[str],
     event_datetime: Optional[datetime] = None,
-) -> pd.Series:
+) -> Tuple[pd.Series, str]:
     today = datetime.utcnow().date()
     start_date = start.date()
     end_date = end.date()
@@ -214,11 +223,13 @@ def _fetch_price_series(
         attempted_symbols.append(symbol)
         if stooq_series is not None and not stooq_series.empty:
             LOGGER.info("Dados obtidos via Stooq para %s (símbolo %s)", ticker, symbol)
-            return stooq_series
+            return stooq_series, symbol
 
-    raise ValueError(
+    raise PriceFetchError(
+        ticker,
+        attempted_symbols,
         "Sem dados de preço retornados via Stooq para %s (tentativas: %s)"
-        % (ticker, ", ".join(attempted_symbols) if attempted_symbols else "nenhuma")
+        % (ticker, ", ".join(attempted_symbols) if attempted_symbols else "nenhuma"),
     )
 
 
@@ -242,7 +253,7 @@ def evaluate_predictions(
     records: Sequence[Dict[str, object]],
     horizons: Sequence[int] = (1, 3, 5),
     neutral_threshold: float = 0.01,
-) -> Tuple[pd.DataFrame, Dict[int, HorizonResult], pd.DataFrame]:
+) -> Tuple[pd.DataFrame, Dict[int, HorizonResult], pd.DataFrame, pd.DataFrame]:
     if pd is None:  # pragma: no cover - dependency guidance
         raise RuntimeError(
             "O pacote 'pandas' é necessário para montar as tabelas de validação. "
@@ -254,9 +265,11 @@ def evaluate_predictions(
         - detailed record dataframe per horizon
         - horizon summary stats
         - aggregate confusion matrix per horizon
+        - availability dataframe with price-fetch diagnostics
     """
 
     detailed_rows: List[Dict[str, object]] = []
+    availability_rows: List[Dict[str, object]] = []
     summaries: Dict[int, HorizonResult] = {}
     confusion_maps: Dict[int, Counter] = defaultdict(Counter)
 
@@ -291,6 +304,18 @@ def evaluate_predictions(
                     event_dt.date(),
                     today,
                 )
+                availability_rows.append(
+                    {
+                        "id": raw.get("id"),
+                        "ticker": ticker,
+                        "country": raw.get("country"),
+                        "event_datetime": event_dt,
+                        "status": "future_event",
+                        "attempted": False,
+                        "price_found": False,
+                        "message": "Evento em data futura ignorado na validação.",
+                    }
+                )
                 continue
 
             if ticker in _TICKERS_TO_SKIP:
@@ -299,26 +324,98 @@ def evaluate_predictions(
                     ticker,
                     event_dt.date(),
                 )
+                availability_rows.append(
+                    {
+                        "id": raw.get("id"),
+                        "ticker": ticker,
+                        "country": raw.get("country"),
+                        "event_datetime": event_dt,
+                        "status": "skipped_ticker",
+                        "attempted": False,
+                        "price_found": False,
+                        "message": "Ticker configurado para ser ignorado.",
+                    }
+                )
                 continue
             window_start, window_end = _trading_window(event_dt, max(horizons))
 
             try:
-                price_series = _fetch_price_series(
+                price_series, used_symbol = _fetch_price_series(
                     ticker,
                     window_start,
                     window_end,
                     raw.get("country"),
                     event_dt,
                 )
-            except Exception as exc:  # pragma: no cover - network variability
+            except PriceFetchError as exc:  # pragma: no cover - network variability
+                LOGGER.warning(
+                    "Falha ao obter preços para %s (%s): %s",
+                    ticker,
+                    raw.get("id"),
+                    exc,
+                )
+                availability_rows.append(
+                    {
+                        "id": raw.get("id"),
+                        "ticker": ticker,
+                        "country": raw.get("country"),
+                        "event_datetime": event_dt,
+                        "status": "price_unavailable",
+                        "attempted": True,
+                        "price_found": False,
+                        "message": str(exc),
+                        "attempted_symbols": ", ".join(exc.attempted_symbols),
+                    }
+                )
+                continue
+            except Exception as exc:  # pragma: no cover - unexpected failures
                 LOGGER.warning("Falha ao obter preços para %s (%s): %s", ticker, raw.get("id"), exc)
+                availability_rows.append(
+                    {
+                        "id": raw.get("id"),
+                        "ticker": ticker,
+                        "country": raw.get("country"),
+                        "event_datetime": event_dt,
+                        "status": "price_error",
+                        "attempted": True,
+                        "price_found": False,
+                        "message": str(exc),
+                    }
+                )
                 continue
 
             base = _price_on_or_after(price_series, event_dt)
             if base is None:
                 LOGGER.debug("Sem preço base para %s em %s", ticker, event_dt)
+                availability_rows.append(
+                    {
+                        "id": raw.get("id"),
+                        "ticker": ticker,
+                        "country": raw.get("country"),
+                        "event_datetime": event_dt,
+                        "status": "missing_base_price",
+                        "attempted": True,
+                        "price_found": False,
+                        "message": "Sem preço base na data do evento.",
+                        "used_symbol": used_symbol,
+                    }
+                )
                 continue
             base_date, base_price = base
+
+            availability_rows.append(
+                {
+                    "id": raw.get("id"),
+                    "ticker": ticker,
+                    "country": raw.get("country"),
+                    "event_datetime": event_dt,
+                    "status": "price_found",
+                    "attempted": True,
+                    "price_found": True,
+                    "message": "",
+                    "used_symbol": used_symbol,
+                }
+            )
 
             for horizon in horizons:
                 target = _price_on_or_after(price_series, event_dt + timedelta(days=horizon))
@@ -352,9 +449,10 @@ def evaluate_predictions(
                 )
 
     detailed_df = pd.DataFrame(detailed_rows)
+    availability_df = pd.DataFrame(availability_rows)
     if detailed_df.empty:
         LOGGER.warning("Nenhum registro com dados de preço foi avaliado.")
-        return detailed_df, summaries, pd.DataFrame()
+        return detailed_df, summaries, pd.DataFrame(), availability_df
 
     for horizon in horizons:
         horizon_df = detailed_df[detailed_df["horizon_days"] == horizon]
@@ -382,7 +480,7 @@ def evaluate_predictions(
             )
     confusion_df = pd.DataFrame(confusion_rows)
 
-    return detailed_df, summaries, confusion_df
+    return detailed_df, summaries, confusion_df, availability_df
 
 
 def create_accuracy_table(summaries: Dict[int, HorizonResult]) -> pd.DataFrame:
@@ -477,6 +575,47 @@ def generate_confusion_heatmap(confusion_df: pd.DataFrame, output_path: Path) ->
     plt.title("Mapa de calor das previsões x movimentos realizados")
     plt.xlabel("Horizon / Movimento realizado")
     plt.ylabel("Movimento esperado")
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=200)
+    plt.close()
+
+
+def generate_price_availability_plot(
+    availability_df: pd.DataFrame, output_path: Path
+) -> None:
+    if availability_df.empty:
+        LOGGER.warning("Sem dados de disponibilidade de preço para gerar gráfico.")
+        return
+
+    attempted_df = availability_df[availability_df["attempted"]]
+    if attempted_df.empty:
+        LOGGER.warning(
+            "Nenhuma tentativa de busca de preço registrada; gráfico de disponibilidade não será gerado."
+        )
+        return
+
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError as exc:  # pragma: no cover - dependency guidance
+        raise RuntimeError(
+            "O pacote 'matplotlib' é necessário para gerar gráficos. "
+            "Instale-o com 'pip install matplotlib' e rode novamente."
+        ) from exc
+
+    summary = (
+        attempted_df["price_found"].value_counts().rename(index={True: "Preço encontrado", False: "Preço indisponível"})
+    )
+
+    labels = summary.index.tolist()
+    values = summary.values.tolist()
+
+    plt.figure(figsize=(6, 4))
+    colors = ["#2ca02c" if "encontrado" in label.lower() else "#d62728" for label in labels]
+    plt.bar(labels, values, color=colors)
+    plt.title("Disponibilidade de preços nas validações")
+    plt.ylabel("Quantidade de eventos")
+    for idx, value in enumerate(values):
+        plt.text(idx, value + 0.05 * max(values), str(value), ha="center", va="bottom")
     plt.tight_layout()
     plt.savefig(output_path, dpi=200)
     plt.close()

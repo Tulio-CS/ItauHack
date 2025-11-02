@@ -16,6 +16,7 @@ from src.validation import (
     evaluate_predictions,
     generate_accuracy_plot,
     generate_confusion_heatmap,
+    generate_price_availability_plot,
     load_structured_records,
 )
 
@@ -63,7 +64,7 @@ def main() -> None:
         raise FileNotFoundError(f"Arquivo de entrada não encontrado: {args.input}")
 
     records = load_structured_records(args.input)
-    detailed_df, summaries, confusion_df = evaluate_predictions(
+    detailed_df, summaries, confusion_df, availability_df = evaluate_predictions(
         records,
         horizons=tuple(sorted(set(args.horizons))),
         neutral_threshold=args.neutral_threshold,
@@ -74,31 +75,40 @@ def main() -> None:
     detailed_path = args.output_dir / "detailed_results.parquet"
     summary_path = args.output_dir / "accuracy_summary.csv"
     confusion_path = args.output_dir / "confusion_matrix.csv"
+    availability_path = args.output_dir / "price_availability.csv"
 
     if detailed_df.empty:
         logging.warning("Nenhum resultado salvo porque não houve dados avaliados.")
-        return
+    else:
+        try:
+            detailed_df.to_parquet(detailed_path, index=False)
+        except Exception as exc:
+            logging.warning("Falha ao salvar Parquet (%s). Salvando CSV como fallback.", exc)
+            detailed_path = detailed_path.with_suffix(".csv")
+            detailed_df.to_csv(detailed_path, index=False)
+        accuracy_df = create_accuracy_table(summaries)
+        accuracy_df.to_csv(summary_path, index=False)
+        confusion_df.to_csv(confusion_path, index=False)
 
-    try:
-        detailed_df.to_parquet(detailed_path, index=False)
-    except Exception as exc:
-        logging.warning("Falha ao salvar Parquet (%s). Salvando CSV como fallback.", exc)
-        detailed_path = detailed_path.with_suffix(".csv")
-        detailed_df.to_csv(detailed_path, index=False)
-    accuracy_df = create_accuracy_table(summaries)
-    accuracy_df.to_csv(summary_path, index=False)
-    confusion_df.to_csv(confusion_path, index=False)
+        accuracy_plot = args.output_dir / "accuracy_by_horizon.png"
+        heatmap_plot = args.output_dir / "confusion_heatmap.png"
+        generate_accuracy_plot(accuracy_df, accuracy_plot)
+        generate_confusion_heatmap(confusion_df, heatmap_plot)
 
-    accuracy_plot = args.output_dir / "accuracy_by_horizon.png"
-    heatmap_plot = args.output_dir / "confusion_heatmap.png"
-    generate_accuracy_plot(accuracy_df, accuracy_plot)
-    generate_confusion_heatmap(confusion_df, heatmap_plot)
+        logging.info("Resultados detalhados: %s", detailed_path)
+        logging.info("Resumo de acurácia: %s", summary_path)
+        logging.info("Confusion matrix: %s", confusion_path)
+        logging.info("Gráfico de acurácia: %s", accuracy_plot)
+        logging.info("Mapa de calor: %s", heatmap_plot)
 
-    logging.info("Resultados detalhados: %s", detailed_path)
-    logging.info("Resumo de acurácia: %s", summary_path)
-    logging.info("Confusion matrix: %s", confusion_path)
-    logging.info("Gráfico de acurácia: %s", accuracy_plot)
-    logging.info("Mapa de calor: %s", heatmap_plot)
+    if not availability_df.empty:
+        availability_df.to_csv(availability_path, index=False)
+        availability_plot = args.output_dir / "price_availability.png"
+        generate_price_availability_plot(availability_df, availability_plot)
+        logging.info("Disponibilidade de preços: %s", availability_path)
+        logging.info("Gráfico de disponibilidade de preços: %s", availability_plot)
+    else:
+        logging.warning("Nenhuma tentativa de busca de preço registrada.")
 
 
 if __name__ == "__main__":
