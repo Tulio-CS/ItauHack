@@ -1,0 +1,2 @@
+ticker,date,news_count,positive_count,negative_count,neutral_count,mean_sentiment,sentiment_label,spread_score,sharpe_kf,representative_headline
+AAPL,2025-10-15,15,2,1,12,0.066667,neutro,0.049251,-8.239742,Oferta da Foxconn por participação em unidade do Grupo ZF estagna

@@ -1,0 +1,5 @@
+2025-11-02 21:59:24,704 [INFO] Iniciando agregação de notícias
+2025-11-02 21:59:24,705 [INFO] Carregando metadados do master_ml_dataset.parquet
+2025-11-02 21:59:24,705 [WARNING] Falha ao ler master_ml_dataset.parquet (Leitura de Parquet requer a instalação de 'pyarrow' ou 'pandas'.). Recorrendo ao summary_backtest.csv.
+2025-11-02 21:59:24,706 [INFO] Salvando 1 registros agregados
+2025-11-02 21:59:24,707 [INFO] Processo concluído
