@@ -21,6 +21,8 @@ from src.pipelines.janus_news_pipeline import (
     aggregate_daily_sentiment,
     aggregate_overall_sentiment,
     copy_structured_file,
+    export_structured_events,
+    load_llm_csv_events,
     load_master_summary,
     load_structured_news,
     merge_sentiment_with_master,
@@ -43,6 +45,12 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=Path("data/output/investing_news_structured.jsonl"),
         help="Destino consolidado das notícias estruturadas.",
+    )
+    parser.add_argument(
+        "--news-csv",
+        type=Path,
+        default=Path("data/news_impact_labels_AAPL.csv"),
+        help="Fallback com os rótulos de impacto avaliados pela LLM.",
     )
     parser.add_argument(
         "--master-summary",
@@ -73,8 +81,29 @@ def main() -> int:
     )
     logger = logging.getLogger("janus_pipeline")
 
-    copy_structured_file(args.source_jsonl, args.target_jsonl)
-    events = load_structured_news(args.target_jsonl)
+    events = []
+    try:
+        copy_structured_file(args.source_jsonl, args.target_jsonl)
+        events = load_structured_news(args.target_jsonl)
+    except FileNotFoundError:
+        logger.warning(
+            "Arquivo JSONL %s ausente; tentando construir a partir do CSV %s",
+            args.source_jsonl,
+            args.news_csv,
+        )
+    except ValueError as exc:
+        logger.warning("Falha ao carregar JSONL estruturado: %s", exc)
+
+    if not events:
+        events = load_llm_csv_events(args.news_csv)
+        if not events:
+            logger.error(
+                "Nenhum evento encontrado no CSV %s. Abortando pipeline.",
+                args.news_csv,
+            )
+            return 1
+        export_structured_events(args.target_jsonl, events)
+
 
     daily = aggregate_daily_sentiment(events)
     overall = aggregate_overall_sentiment(events)

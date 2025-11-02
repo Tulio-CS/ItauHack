@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from statistics import mean
-from typing import Dict, Iterable, Iterator, List, Tuple
+from typing import Dict, Iterable, List, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -33,11 +33,46 @@ SENTIMENT_SCORES: Dict[str, int] = {
     "misto": 0,
 }
 
+POSITIVE_KEYWORDS = {
+    "alta",
+    "ganha",
+    "recorde",
+    "otimista",
+    "compra",
+    "expande",
+    "cresce",
+    "surge",
+    "melhora",
+    "aprovado",
+    "positivo",
+    "bullish",
+    "subida",
+    "forte",
+}
+
+NEGATIVE_KEYWORDS = {
+    "queda",
+    "cai",
+    "perde",
+    "despenca",
+    "alerta",
+    "risco",
+    "baixa",
+    "vende",
+    "piora",
+    "crise",
+    "negativo",
+    "bearish",
+    "recuo",
+    "fraco",
+}
+
 
 @dataclass
 class NewsEvent:
     ticker: str
     date: str
+    raw_datetime: str
     sentiment_label: str
     sentiment_score: float
     source: str
@@ -115,6 +150,7 @@ def load_structured_news(path: Path) -> List[NewsEvent]:
                 NewsEvent(
                     ticker=ticker.strip().upper(),
                     date=date,
+                    raw_datetime=str(raw.get("datetime") or date),
                     sentiment_label=label,
                     sentiment_score=score,
                     source=str(raw.get("source") or raw.get("publisher") or ""),
@@ -122,6 +158,58 @@ def load_structured_news(path: Path) -> List[NewsEvent]:
                 )
             )
     logger.info("Carregados %s eventos estruturados", len(events))
+    if not events:
+        raise ValueError(f"Nenhum evento válido encontrado em {path}")
+    return events
+
+
+def _headline_sentiment(text: str) -> Tuple[str, float]:
+    if not text:
+        return "desconhecido", 0.0
+    text_norm = text.lower()
+    score = 0
+    for token in POSITIVE_KEYWORDS:
+        if token in text_norm:
+            score += 1
+    for token in NEGATIVE_KEYWORDS:
+        if token in text_norm:
+            score -= 1
+    if score > 0:
+        return "positivo", float(min(score, 3)) / 3.0
+    if score < 0:
+        return "negativo", float(max(score, -3)) / 3.0
+    return "neutro", 0.0
+
+
+def load_llm_csv_events(path: Path) -> List[NewsEvent]:
+    if not path.exists():
+        logger.warning("Arquivo CSV de fallback não encontrado: %s", path)
+        return []
+
+    events: List[NewsEvent] = []
+    with path.open("r", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            date = _normalise_datetime(row.get("datetime"))
+            if not date:
+                continue
+            ticker = (row.get("ticker") or "UNKNOWN").strip().upper()
+            label, score = _sentiment_to_score(row.get("label"))
+            if label == "desconhecido":
+                hl_label, hl_score = _headline_sentiment(row.get("headline", ""))
+                label, score = hl_label, hl_score
+            events.append(
+                NewsEvent(
+                    ticker=ticker,
+                    date=date,
+                    raw_datetime=row.get("datetime", date),
+                    sentiment_label=label,
+                    sentiment_score=round(score, 4),
+                    source=row.get("source", ""),
+                    headline=row.get("headline", ""),
+                )
+            )
+    logger.info("Carregados %s eventos do fallback CSV", len(events))
     return events
 
 
@@ -276,8 +364,31 @@ def merge_sentiment_with_master(
 
 
 def copy_structured_file(source: Path, target: Path) -> None:
+    if not source.exists():
+        raise FileNotFoundError(str(source))
     target.parent.mkdir(parents=True, exist_ok=True)
     with source.open("r", encoding="utf-8") as src, target.open("w", encoding="utf-8") as dst:
         for line in src:
             dst.write(line)
     logger.info("Arquivo estruturado copiado para %s", target)
+
+
+def export_structured_events(path: Path, events: Iterable[NewsEvent]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        for event in events:
+            payload = {
+                "raw": {
+                    "ticker": event.ticker,
+                    "datetime": event.raw_datetime,
+                    "source": event.source,
+                    "headline": event.headline,
+                },
+                "structured_event": {
+                    "ticker": event.ticker,
+                    "sentimento_geral": event.sentiment_label,
+                    "sentiment_score": event.sentiment_score,
+                },
+            }
+            handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    logger.info("JSONL estruturado regenerado em %s", path)
