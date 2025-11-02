@@ -196,6 +196,24 @@ def _parse_datetime(value: str) -> datetime:
         raise ValueError(f"Não foi possível converter '{value}' em datetime ISO 8601") from exc
 
 
+def _ensure_naive_datetime_series(values: Sequence[object] | "pd.Series") -> "pd.Series":
+    if pd is None:  # pragma: no cover - dependency guidance
+        raise RuntimeError(
+            "O pacote 'pandas' é necessário para normalizar datas. "
+            "Instale-o com 'pip install pandas' e rode novamente."
+        )
+
+    converted = pd.to_datetime(values, utc=True, errors="coerce")
+    if not isinstance(converted, pd.Series):
+        converted = pd.Series(converted)
+    return converted.dt.tz_localize(None)
+
+
+def _ensure_naive_timestamp(value: object) -> "pd.Timestamp":
+    series = _ensure_naive_datetime_series([value])
+    return series.iloc[0]
+
+
 def _trading_window(date: datetime, days_forward: int) -> Tuple[datetime, datetime]:
     start = date - timedelta(days=5)
     end = date + timedelta(days=days_forward + 7)
@@ -928,7 +946,7 @@ def _build_per_day_summary(detailed_df: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame()
 
     df = detailed_df.copy()
-    df["event_date"] = pd.to_datetime(df["event_datetime"]).dt.normalize()
+    df["event_date"] = _ensure_naive_datetime_series(df["event_datetime"]).dt.normalize()
 
     per_day_rows: List[Dict[str, object]] = []
     grouped = df.groupby(["resolved_ticker", "event_date", "horizon_days"], sort=True)
@@ -940,7 +958,7 @@ def _build_per_day_summary(detailed_df: pd.DataFrame) -> pd.DataFrame:
         per_day_rows.append(
             {
                 "resolved_ticker": resolved_ticker,
-                "event_date": pd.to_datetime(event_date),
+                "event_date": _ensure_naive_timestamp(event_date),
                 "horizon_days": int(horizon),
                 "news_count": int(unique_events["id"].nunique()),
                 "positive_news": int((unique_events["expected_move"] > 0).sum()),
@@ -975,11 +993,15 @@ def _build_rolling_window_summary(
         return pd.DataFrame()
 
     events_df = pd.DataFrame(events_list)
-    events_df["event_datetime"] = pd.to_datetime(events_df["event_datetime"])
+    events_df["event_datetime"] = _ensure_naive_datetime_series(
+        events_df["event_datetime"]
+    )
     events_df["event_date"] = events_df["event_datetime"].dt.normalize()
 
     per_day_df = per_day_df.copy()
-    per_day_df["event_date"] = pd.to_datetime(per_day_df["event_date"]).dt.normalize()
+    per_day_df["event_date"] = _ensure_naive_datetime_series(
+        per_day_df["event_date"]
+    ).dt.normalize()
 
     events_by_ticker: Dict[str, pd.DataFrame] = {}
     for ticker, ticker_df in events_df.groupby("resolved_ticker"):
@@ -996,7 +1018,7 @@ def _build_rolling_window_summary(
         if ticker_events is None or ticker_events.empty:
             continue
 
-        event_date_ts = pd.to_datetime(event_date)
+        event_date_ts = _ensure_naive_timestamp(event_date)
 
         for window_size in ROLLING_WINDOW_SIZES:
             window_start = event_date_ts - pd.Timedelta(days=window_size - 1)
