@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="400" viewBox="0 0 800 400">
+<rect x="0" y="0" width="800.0" height="400.0" fill="#ffffff" />
+<line x1="60.0" y1="360.0" x2="780.0" y2="360.0" stroke="#000000" stroke-width="2" />
+<line x1="60.0" y1="360.0" x2="60.0" y2="50.0" stroke="#000000" stroke-width="2" />
+<line x1="60.00" y1="298.00" x2="780.00" y2="298.00" stroke="#d0d0d0" stroke-width="1" stroke-dasharray="4 4" />
+<line x1="60.00" y1="236.00" x2="780.00" y2="236.00" stroke="#d0d0d0" stroke-width="1" stroke-dasharray="4 4" />
+<line x1="60.00" y1="174.00" x2="780.00" y2="174.00" stroke="#d0d0d0" stroke-width="1" stroke-dasharray="4 4" />
+<line x1="60.00" y1="112.00" x2="780.00" y2="112.00" stroke="#d0d0d0" stroke-width="1" stroke-dasharray="4 4" />
+<polyline fill="none" stroke="#2266cc" stroke-width="2" points="420.00,205.00" />
+<text x="400.0" y="25.0" text-anchor="middle" font-family="Arial" font-size="20">PnL acumulado do agente Janus</text>
+<text x="30.0" y="205.0" text-anchor="middle" font-family="Arial" font-size="16" transform="rotate(-90 30.0,205.0)">PnL</text>
+<text x="420.00" y="380.00" text-anchor="middle" font-family="Arial" font-size="12">0</text>
+<text x="50.00" y="364.00" text-anchor="end" font-family="Arial" font-size="12">-0.03</text>
+<text x="50.00" y="302.00" text-anchor="end" font-family="Arial" font-size="12">-0.03</text>
+<text x="50.00" y="240.00" text-anchor="end" font-family="Arial" font-size="12">-0.03</text>
+<text x="50.00" y="178.00" text-anchor="end" font-family="Arial" font-size="12">-0.03</text>
+<text x="50.00" y="116.00" text-anchor="end" font-family="Arial" font-size="12">-0.03</text>
+<text x="50.00" y="54.00" text-anchor="end" font-family="Arial" font-size="12">-0.03</text>
+</svg>

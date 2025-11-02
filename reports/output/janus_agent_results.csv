@@ -1,0 +1,2 @@
+ticker,date,sentiment_score,spread_score,position,action,pnl,cumulative_pnl
+AAPL,2025-10-15,0.066667,1.000000,-0.179727,vendido,-0.028756,-0.028756

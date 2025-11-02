@@ -1,0 +1,4 @@
+2025-11-02 22:13:44,939 [INFO] Carregando dados agregados de notícias
+2025-11-02 22:13:44,939 [INFO] Gerando relatórios do agente
+2025-11-02 22:13:44,940 [INFO] Resultados salvos em reports/output/janus_agent_results.csv, reports/output/janus_agent_summary.csv e reports/output/janus_agent_cumulative_pnl.svg
+2025-11-02 22:13:44,940 [INFO] Relatórios concluídos
