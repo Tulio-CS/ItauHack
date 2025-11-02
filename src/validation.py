@@ -6,6 +6,7 @@ import dataclasses
 import json
 import logging
 import math
+import unicodedata
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -31,12 +32,99 @@ PAIRS_BDR_TO_ADR = {
     "AVGO34": "AVGO",
     "BABA34": "BABA",
     "JDCO34": "JD",
+    "BERK34": "BRK.B",
+    "LILY34": "LLY",
+    "VISA34": "V",
+    "JPMC34": "JPM",
+    "EXXO34": "XOM",
+    "JNJB34": "JNJ",
+    "MSCD34": "MA",
+    "PGCO34": "PG",
+    "COWC34": "COST",
+    "BOAC34": "BAC",
+    "NFLX34": "NFLX",
+    "A1MD34": "AMD",
+    "COCA34": "KO",
+    "PEPB34": "PEP",
+    "WALM34": "WMT",
+    "MCDC34": "MCD",
+    "DISB34": "DIS",
+    "CATP34": "CAT",
+    "ITLC34": "INTC",
+    "CSCO34": "CSCO",
+    "ORCL34": "ORCL",
+    "SSFO34": "CRM",
+    "ADBE34": "ADBE",
+    "NIKE34": "NKE",
+    "SBUB34": "SBUX",
+    "BOEI34": "BA",
+    "GSGI34": "GS",
+    "MSBR34": "MS",
+    "FDMO34": "F",
+    "GMCO34": "GM",
+    "PFIZ34": "PFE",
+    "CHVX34": "CVX",
+    "PYPL34": "PYPL",
+    "C2OI34": "COIN",
+    "U1BE34": "UBER",
+    "A1BN34": "ABNB",
 }
 
 _MANUAL_NEWS_ALIASES = {
     "GOOGL": "GOGL34",
     "GOOG": "GOGL34",
     "GOGL35": "GOGL34",
+    "GOGL34": "GOGL34",
+    "BRK.B": "BERK34",
+    "BRKB": "BERK34",
+    "BRK-B": "BERK34",
+    "BRK B": "BERK34",
+    "GOOG34": "GOGL34",
+    "CRM": "SSFO34",
+    "TSLA": "TSLA34",
+    "META": "M1TA34",
+    "NVDA": "NVDC34",
+    "AMZN": "AMZO34",
+    "AAPL": "AAPL34",
+    "MSFT": "MSFT34",
+    "JD": "JDCO34",
+    "TSM": "TSMC34",
+    "AVGO": "AVGO34",
+    "BABA": "BABA34",
+    "LLY": "LILY34",
+    "V": "VISA34",
+    "JPM": "JPMC34",
+    "XOM": "EXXO34",
+    "JNJ": "JNJB34",
+    "MA": "MSCD34",
+    "PG": "PGCO34",
+    "COST": "COWC34",
+    "BAC": "BOAC34",
+    "NFLX": "NFLX34",
+    "AMD": "A1MD34",
+    "KO": "COCA34",
+    "PEP": "PEPB34",
+    "WMT": "WALM34",
+    "MCD": "MCDC34",
+    "DIS": "DISB34",
+    "CAT": "CATP34",
+    "INTC": "ITLC34",
+    "CSCO": "CSCO34",
+    "ORCL": "ORCL34",
+    "ADBE": "ADBE34",
+    "NKE": "NIKE34",
+    "SBUX": "SBUB34",
+    "BA": "BOEI34",
+    "GS": "GSGI34",
+    "MS": "MSBR34",
+    "F": "FDMO34",
+    "GM": "GMCO34",
+    "PFE": "PFIZ34",
+    "CVX": "CHVX34",
+    "PYPL": "PYPL34",
+    "COIN": "C2OI34",
+    "UBER": "U1BE34",
+    "ABNB": "A1BN34",
 }
 
 ROLLING_WINDOW_SIZES: Tuple[int, int] = (3, 5)
@@ -123,6 +211,26 @@ class LocalPriceStore:
     def _normalize_sheet_name(name: str) -> str:
         return name.strip().upper()
 
+    @staticmethod
+    def _normalize_column_name(name: str) -> str:
+        normalized = unicodedata.normalize("NFKD", str(name))
+        normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+        return normalized.strip().lower()
+
+    @staticmethod
+    def _normalize_numeric(series: "pd.Series") -> "pd.Series":
+        def _convert(value: object) -> Optional[float]:
+            text = str(value).strip()
+            if not text or text.lower() in {"nan", "none"}:
+                return None
+
+            text = text.replace("\u00a0", "").replace(" ", "")
+            if "," in text:
+                text = text.replace(".", "").replace(",", ".")
+            return pd.to_numeric(text, errors="coerce")  # type: ignore[arg-type]
+
+        return series.apply(_convert)
+
     def _load_workbook(self, path: Path) -> Dict[str, "pd.Series"]:
         data: Dict[str, "pd.Series"] = {}
         if not path.exists():
@@ -144,27 +252,68 @@ class LocalPriceStore:
                 continue
 
             df.columns = [str(col).strip() for col in df.columns]
-            if "Date" not in df.columns or "Last Price" not in df.columns:
+
+            column_lookup = {
+                self._normalize_column_name(original): original for original in df.columns
+            }
+
+            date_key = next(
+                (
+                    column_lookup[key]
+                    for key in column_lookup
+                    if key in {"date", "data"}
+                ),
+                None,
+            )
+
+            price_key = next(
+                (
+                    column_lookup[key]
+                    for key in column_lookup
+                    if key
+                    in {
+                        "last price",
+                        "fechamento",
+                        "ultimo",
+                        "último",
+                        "close",
+                        "preco de fechamento",
+                        "preço de fechamento",
+                    }
+                ),
+                None,
+            )
+
+            if date_key is None or price_key is None:
                 LOGGER.debug(
-                    "Aba %s ignorada por não conter as colunas esperadas (Date, Last Price)",
+                    "Aba %s ignorada por não conter as colunas esperadas (encontradas: %s)",
                     sheet_name,
+                    ", ".join(df.columns),
                 )
                 continue
 
-            df = df[["Date", "Last Price"]].dropna()
+            df = df[[date_key, price_key]].dropna()
             if df.empty:
                 continue
 
-            df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
-            df["Last Price"] = pd.to_numeric(df["Last Price"], errors="coerce")
-            df = df.dropna(subset=["Date", "Last Price"])
+            df[date_key] = pd.to_datetime(df[date_key], errors="coerce", dayfirst=True)
+            df[price_key] = self._normalize_numeric(df[price_key])
+            df = df.dropna(subset=[date_key, price_key])
             if df.empty:
                 continue
 
             series = (
-                df.set_index("Date")["Last Price"].astype(float).sort_index()
+                df.set_index(date_key)[price_key].astype(float).sort_index()
             )
             data[self._normalize_sheet_name(sheet_name)] = series
+            LOGGER.debug(
+                "Aba %s em %s carregada (%d registros, colunas: data=%s preço=%s)",
+                sheet_name,
+                path.name,
+                len(series),
+                date_key,
+                price_key,
+            )
 
         return data
 
@@ -255,10 +404,12 @@ class LocalPriceStore:
                 if not series.empty:
                     return series, f"ADR:{adr}"
 
+        attempted_desc = ", ".join(attempted) if attempted else "nenhuma tentativa"
         raise PriceFetchError(
             canonical_bdr,
             attempted,
-            "Sem dados de preço disponíveis nas planilhas para %s" % canonical_bdr,
+            "Sem dados de preço disponíveis nas planilhas para %s (tentativas: %s)"
+            % (canonical_bdr, attempted_desc),
         )
 
 
@@ -268,10 +419,26 @@ _PRICE_STORE: Optional[LocalPriceStore] = None
 def _get_price_store() -> LocalPriceStore:
     global _PRICE_STORE
     if _PRICE_STORE is None:
-        _PRICE_STORE = LocalPriceStore(
+        bdr_candidates = [
+            Path("data/hist_bdr.xlsx"),
             Path("data/Hist_BDRs.xlsx"),
+        ]
+        adr_candidates = [
+            Path("data/hist_origem_bdr.xlsx"),
             Path("data/Hist_Origem_BDRs.xlsx"),
+            Path("data/Hist_Origem_ADRs.xlsx"),
+        ]
+
+        bdr_path = next((path for path in bdr_candidates if path.exists()), bdr_candidates[0])
+        adr_path = next((path for path in adr_candidates if path.exists()), adr_candidates[0])
+
+        LOGGER.debug(
+            "Inicializando LocalPriceStore com planilhas BDR=%s e Origem=%s",
+            bdr_path,
+            adr_path,
         )
+
+        _PRICE_STORE = LocalPriceStore(bdr_path, adr_path)
     return _PRICE_STORE
 
 
