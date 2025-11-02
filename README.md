@@ -45,7 +45,23 @@ python scripts/validate_predictions.py \
 Parâmetros importantes:
 
 - `--neutral-threshold`: retorno absoluto considerado neutro (padrão `0.01`, ou 1%).
+- `--mismatch-threshold`: tolerância (em retorno absoluto) para considerar pequenas
+  divergências como aceitáveis quando o sinal não inverte (padrão `0.02`).
 - `--horizons`: horizontes personalizados (ex.: `--horizons 1 2 4 7`).
+
+### Como a acurácia é calculada
+
+- Primeiro convertemos o retorno observado em `realized_direction` usando
+  `--neutral-threshold`: acima desse valor o movimento é positivo (+1), abaixo do negativo
+  é -1 e, dentro do intervalo, 0.
+- Uma previsão é considerada **incorreta** somente em duas situações:
+  1. O sinal esperado (positivo/negativo) diverge do sinal realizado (retorno efetivo
+     negativo para expectativa positiva, ou vice-versa), independentemente da
+     magnitude do movimento.
+  2. A diferença de direções não envolve inversão de sinal, mas o retorno observado
+     ultrapassa `--mismatch-threshold`, indicando um desvio material da expectativa.
+- Movimentos dentro da tolerância especificada são tratados como corretos, evitando
+  penalizar variações pequenas quando, por exemplo, o modelo esperava neutralidade.
 
 ### Como os preços são encontrados
 

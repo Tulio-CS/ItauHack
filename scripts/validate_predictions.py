@@ -44,6 +44,15 @@ def parse_args() -> argparse.Namespace:
         help="Retorno absoluto abaixo do qual o movimento é considerado neutro.",
     )
     parser.add_argument(
+        "--mismatch-threshold",
+        type=float,
+        default=0.02,
+        help=(
+            "Retorno absoluto máximo para considerar discrepâncias como toleráveis "
+            "quando o sinal não diverge."
+        ),
+    )
+    parser.add_argument(
         "--log-level",
         default="INFO",
         help="Nível de log (DEBUG, INFO, WARNING, ERROR).",
@@ -77,6 +86,7 @@ def main() -> None:
         records,
         horizons=tuple(sorted(set(args.horizons))),
         neutral_threshold=args.neutral_threshold,
+        mismatch_threshold=args.mismatch_threshold,
     )
 
     args.output_dir.mkdir(parents=True, exist_ok=True)

@@ -611,6 +611,7 @@ def evaluate_predictions(
     records: Sequence[Dict[str, object]],
     horizons: Sequence[int] = (1, 3, 5),
     neutral_threshold: float = 0.01,
+    mismatch_threshold: float = 0.02,
 ) -> Tuple[
     pd.DataFrame,
     Dict[int, HorizonResult],
@@ -861,8 +862,19 @@ def evaluate_predictions(
                 target_date, target_price = target
                 ret = (target_price - base_price) / base_price
                 realized_dir = _direction_from_return(ret, neutral_threshold)
+                abs_return = abs(ret)
+                sign_mismatch = (expected_move > 0 and ret < 0) or (
+                    expected_move < 0 and ret > 0
+                )
+                within_tolerance = abs_return <= mismatch_threshold
 
-                is_correct = realized_dir == expected_move
+                if realized_dir == expected_move:
+                    is_correct = True
+                elif sign_mismatch:
+                    is_correct = False
+                else:
+                    is_correct = within_tolerance
+
                 is_neutral_hit = expected_move == 0 and realized_dir == 0
                 confusion_maps[horizon][(expected_move, realized_dir)] += 1
 
@@ -879,6 +891,10 @@ def evaluate_predictions(
                         "sentiment": sentiment,
                         "expected_move": expected_move,
                         "return": ret,
+                        "abs_return": abs_return,
+                        "mismatch_threshold": mismatch_threshold,
+                        "within_tolerance": within_tolerance,
+                        "sign_mismatch": sign_mismatch,
                         "realized_direction": realized_dir,
                         "correct": is_correct,
                         "neutral_hit": is_neutral_hit,
