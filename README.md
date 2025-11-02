@@ -69,3 +69,13 @@ O script gera:
 Use `--log-level DEBUG` em qualquer script para rastrear as decisões da heurística ou mensagens detalhadas de download de preços.
 
 Como a validação utiliza apenas os históricos locais em Excel, nenhuma conexão externa é necessária. Verifique `price_availability.csv` para identificar quais tickers foram ignorados por falta de cobertura nas planilhas ou por ausência de dados no intervalo solicitado.
+
+#### Sobre o log "fora da cobertura disponível"
+
+Cada aba dos arquivos `Hist_BDRs.xlsx` e `Hist_Origem_BDRs.xlsx` possui uma janela fixa de datas. Quando uma notícia é mais recente do que a última linha disponível nessas planilhas (ou anterior ao início da série), o script não consegue montar a janela de 1/3/5 dias necessária para calcular os retornos. Nesses casos você verá logs como:
+
+```
+INFO:src.validation:Evento <ID> (<ticker>) fora da cobertura disponível para <BDR>: <data_inicial> a <data_final>
+```
+
+Isso significa que o evento foi ignorado porque não existem cotações no Excel para o período solicitado. Para remover o aviso, atualize as planilhas com dados mais recentes (ou históricos mais antigos, conforme o caso) e execute novamente a validação.
