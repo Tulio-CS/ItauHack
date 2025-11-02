@@ -12,7 +12,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 from urllib.error import HTTPError, URLError
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 try:
     import pandas as pd
@@ -116,7 +116,8 @@ def _attempt_stooq(
     )
 
     try:  # pragma: no cover - network variability
-        with urlopen(url, timeout=10) as response:
+        request = Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urlopen(request, timeout=10) as response:
             if response.status != 200:
                 LOGGER.debug("Resposta %s da Stooq para %s", response.status, ticker)
                 return None
