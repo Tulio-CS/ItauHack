@@ -182,6 +182,22 @@ class LocalPriceStore:
 
         return alias
 
+    def covered_bdrs(self) -> List[str]:
+        """Return canonical BDR tickers that have historical data available."""
+
+        covered: Dict[str, None] = {}
+
+        for ticker, series in self._bdr_data.items():
+            if not series.empty:
+                covered[ticker.upper()] = None
+
+        for bdr, adr in PAIRS_BDR_TO_ADR.items():
+            adr_series = self._adr_data.get(adr.upper())
+            if adr_series is not None and not adr_series.empty:
+                covered[bdr.upper()] = None
+
+        return sorted(covered.keys())
+
     def resolve_ticker(self, ticker: str) -> Optional[str]:
         cleaned = ticker.strip().upper()
         if not cleaned:
@@ -343,6 +359,32 @@ def evaluate_predictions(
             continue
         grouped_by_ticker[ticker].append(record)
 
+    jsonl_tickers = sorted(grouped_by_ticker.keys())
+    covered_pairs = []
+    uncovered_tickers = []
+    for ticker in jsonl_tickers:
+        resolved = price_store.resolve_ticker(ticker)
+        if resolved is not None:
+            covered_pairs.append(f"{ticker}->{resolved}")
+        else:
+            uncovered_tickers.append(ticker)
+
+    if covered_pairs:
+        LOGGER.info(
+            "Empresas no JSONL com cobertura nas planilhas: %s",
+            ", ".join(covered_pairs),
+        )
+    else:
+        LOGGER.info("Nenhuma empresa do JSONL possui cobertura nas planilhas.")
+
+    if uncovered_tickers:
+        LOGGER.info(
+            "Empresas no JSONL fora das planilhas: %s",
+            ", ".join(uncovered_tickers),
+        )
+    else:
+        LOGGER.info("Todas as empresas do JSONL possuem cobertura nas planilhas.")
+
     today = datetime.utcnow().date()
 
     for ticker, ticker_records in grouped_by_ticker.items():
@@ -381,11 +423,6 @@ def evaluate_predictions(
 
             canonical_ticker = price_store.resolve_ticker(ticker)
             if canonical_ticker is None:
-                LOGGER.info(
-                    "Ticker %s não possui cobertura nas planilhas de preços; registro %s ignorado.",
-                    ticker,
-                    raw.get("id"),
-                )
                 availability_rows.append(
                     {
                         "id": raw.get("id"),
