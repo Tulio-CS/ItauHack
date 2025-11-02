@@ -148,10 +148,21 @@ class HorizonResult:
 class PriceFetchError(RuntimeError):
     """Raised when price data could not be recovered for a ticker."""
 
-    def __init__(self, ticker: str, attempted_symbols: Sequence[str], message: str) -> None:
-        super().__init__(message)
+    def __init__(
+        self,
+        ticker: str,
+        attempted_symbols: Sequence[str],
+        message: str,
+        *,
+        details: Optional[str] = None,
+    ) -> None:
+        full_message = message
+        if details:
+            full_message = f"{message} | Detalhes: {details}"
+        super().__init__(full_message)
         self.ticker = ticker
         self.attempted_symbols = list(attempted_symbols)
+        self.details = details
 
 
 SENTIMENT_TO_EXPECTED_MOVE = {
@@ -385,31 +396,79 @@ class LocalPriceStore:
         self, canonical_bdr: str, start_date: date, end_date: date
     ) -> Tuple["pd.Series", str]:
         attempted: List[str] = []
+        attempt_details: List[str] = []
         canonical = canonical_bdr.upper()
 
         if canonical in self._bdr_data:
             attempted.append(f"BDR:{canonical}")
-            series = self._slice_series(self._bdr_data[canonical], start_date, end_date)
-            if not series.empty:
-                return series, f"BDR:{canonical}"
+            base_series = self._bdr_data[canonical]
+            if base_series.empty:
+                attempt_details.append(f"BDR:{canonical} (aba vazia)")
+            else:
+                series = self._slice_series(base_series, start_date, end_date)
+                if not series.empty:
+                    return series, f"BDR:{canonical}"
+                min_date = base_series.index.min()
+                max_date = base_series.index.max()
+                attempt_details.append(
+                    "BDR:%s (intervalo solicitado %s a %s fora da cobertura disponível %s a %s)"
+                    % (
+                        canonical,
+                        start_date,
+                        end_date,
+                        min_date.date() if isinstance(min_date, pd.Timestamp) else min_date,
+                        max_date.date() if isinstance(max_date, pd.Timestamp) else max_date,
+                    )
+                )
+        else:
+            attempt_details.append(f"BDR:{canonical} (aba não encontrada)")
 
         adr = PAIRS_BDR_TO_ADR.get(canonical)
         if adr:
             adr = adr.upper()
+            attempted.append(f"ADR:{adr}")
             if adr in self._adr_data:
-                attempted.append(f"ADR:{adr}")
-                series = self._slice_series(
-                    self._adr_data[adr], start_date, end_date
+                base_series = self._adr_data[adr]
+                if base_series.empty:
+                    attempt_details.append(f"ADR:{adr} (aba vazia)")
+                else:
+                    series = self._slice_series(
+                        base_series, start_date, end_date
+                    )
+                    if not series.empty:
+                        return series, f"ADR:{adr}"
+                    min_date = base_series.index.min()
+                    max_date = base_series.index.max()
+                    attempt_details.append(
+                        "ADR:%s (intervalo solicitado %s a %s fora da cobertura disponível %s a %s)"
+                        % (
+                            adr,
+                            start_date,
+                            end_date,
+                            min_date.date() if isinstance(min_date, pd.Timestamp) else min_date,
+                            max_date.date() if isinstance(max_date, pd.Timestamp) else max_date,
+                        )
+                    )
+            else:
+                attempt_details.append(f"ADR:{adr} (aba não encontrada)")
+
+        else:
+            mapped = PAIRS_BDR_TO_ADR.get(canonical)
+            if mapped:
+                attempt_details.append(
+                    f"ADR:{mapped.upper()} (aba não encontrada)"
                 )
-                if not series.empty:
-                    return series, f"ADR:{adr}"
+            else:
+                attempt_details.append("ADR:sem mapeamento (par ADR inexistente)")
 
         attempted_desc = ", ".join(attempted) if attempted else "nenhuma tentativa"
+        detail_desc = "; ".join(attempt_details) or None
         raise PriceFetchError(
             canonical_bdr,
             attempted,
             "Sem dados de preço disponíveis nas planilhas para %s (tentativas: %s)"
             % (canonical_bdr, attempted_desc),
+            details=detail_desc,
         )
 
 
